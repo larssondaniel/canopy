@@ -2,8 +2,8 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.modelContext) private var modelContext
+    @SwiftUI.Environment(AppState.self) private var appState
+    @SwiftUI.Environment(\.modelContext) private var modelContext
     @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
 
     var body: some View {

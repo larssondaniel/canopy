@@ -10,7 +10,7 @@ struct CanopyApp: App {
             ContentView()
                 .environment(appState)
         }
-        .modelContainer(for: [QueryTab.self])
+        .modelContainer(for: [QueryTab.self, AppEnvironment.self, ActiveEnvironmentState.self])
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {
