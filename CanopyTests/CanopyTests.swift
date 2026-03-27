@@ -13,4 +13,25 @@ struct AppStateTests {
         #expect(state.tabs.count == 1)
         #expect(state.selectedTab == state.tabs.first?.id)
     }
+
+    @Test("selectedQueryTab returns the correct tab")
+    func selectedQueryTab() {
+        let state = AppState()
+        #expect(state.selectedQueryTab == nil)
+
+        state.addTab()
+        let tab = state.selectedQueryTab
+        #expect(tab != nil)
+        #expect(tab?.id == state.selectedTab)
+    }
+
+    @Test("Adding multiple tabs selects the latest")
+    func addMultipleTabs() {
+        let state = AppState()
+        state.addTab()
+        state.addTab()
+
+        #expect(state.tabs.count == 2)
+        #expect(state.selectedTab == state.tabs.last?.id)
+    }
 }
