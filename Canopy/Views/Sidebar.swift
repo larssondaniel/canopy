@@ -1,18 +1,21 @@
 import SwiftUI
+import SwiftData
 
 struct Sidebar: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
 
     var body: some View {
         @Bindable var appState = appState
 
         List(selection: $appState.selectedTab) {
             Section("Queries") {
-                if appState.tabs.isEmpty {
+                if tabs.isEmpty {
                     Text("No queries yet")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(appState.tabs) { tab in
+                    ForEach(tabs) { tab in
                         Label(tab.name, systemImage: "arrow.right.circle")
                             .tag(tab.id)
                     }

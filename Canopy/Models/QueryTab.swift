@@ -1,26 +1,30 @@
 import Foundation
-import Observation
+import SwiftData
 
-@Observable
-final class QueryTab: Identifiable {
-    let id = UUID()
+@Model
+final class QueryTab {
+    var id: UUID = UUID()
     var name: String = "Untitled"
     var endpoint: String = ""
     var query: String = ""
     var variables: String = ""
-    var method: HTTPMethod = .post
-    var headers: [HeaderEntry] = []
-    var authConfiguration: AuthConfiguration = .none
+    var method: HTTPMethod = HTTPMethod.post
+    var headers: [CodableHeader] = []
+    var authConfig: CodableAuth = CodableAuth.none
+    var createdAt: Date = Date()
+    var sortOrder: Int = 0
 
-    // Response state
+    // Persisted response state
     var responseBody: String?
     var responseStatusCode: Int?
     var responseTime: TimeInterval?
     var responseSize: Int?
     var responseHeaders: [String: String]?
-    var isLoading: Bool = false
-    var error: String?
+    var lastError: String?
 
-    // In-flight request tracking
-    var currentTask: Task<Void, Never>?
+    // Transient state (not persisted)
+    @Transient var currentTask: Task<Void, Never>? = nil
+    @Transient var isLoading: Bool = false
+
+    init() {}
 }

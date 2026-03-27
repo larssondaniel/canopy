@@ -1,7 +1,10 @@
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
 
     var body: some View {
         @Bindable var appState = appState
@@ -9,7 +12,8 @@ struct ContentView: View {
         NavigationSplitView {
             Sidebar()
         } detail: {
-            if let tab = appState.selectedQueryTab {
+            if let selectedTab = appState.selectedTab,
+               let tab = tabs.first(where: { $0.id == selectedTab }) {
                 QueryClientView(tab: tab)
             } else {
                 VStack(spacing: 12) {
@@ -26,5 +30,8 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
+        .onAppear {
+            appState.modelContext = modelContext
+        }
     }
 }

@@ -99,8 +99,9 @@ struct AuthEditor: View {
     }
 
     private func loadFromTab() {
-        selectedAuthType = tab.authConfiguration.authType
-        switch tab.authConfiguration {
+        let auth = tab.authConfig.toAuthConfiguration()
+        selectedAuthType = auth.authType
+        switch auth {
         case .none:
             username = ""
             password = ""
@@ -132,15 +133,17 @@ struct AuthEditor: View {
     }
 
     private func syncToTab() {
+        let auth: AuthConfiguration
         switch selectedAuthType {
         case .none:
-            tab.authConfiguration = .none
+            auth = .none
         case .basic:
-            tab.authConfiguration = .basic(username: username, password: password)
+            auth = .basic(username: username, password: password)
         case .bearer:
-            tab.authConfiguration = .bearer(token: token)
+            auth = .bearer(token: token)
         case .apiKey:
-            tab.authConfiguration = .apiKey(headerName: apiKeyName, value: apiKeyValue)
+            auth = .apiKey(headerName: apiKeyName, value: apiKeyValue)
         }
+        tab.authConfig = CodableAuth(authConfiguration: auth)
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 @main
 struct CanopyApp: App {
@@ -9,6 +10,7 @@ struct CanopyApp: App {
             ContentView()
                 .environment(appState)
         }
+        .modelContainer(for: [QueryTab.self])
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {

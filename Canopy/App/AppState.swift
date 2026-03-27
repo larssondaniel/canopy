@@ -1,19 +1,19 @@
 import SwiftUI
+import SwiftData
 import Observation
 
 @Observable
+@MainActor
 final class AppState {
     var selectedTab: UUID?
-    var tabs: [QueryTab] = []
+    var modelContext: ModelContext?
 
     func addTab() {
+        guard let modelContext else { return }
+        let tabs = (try? modelContext.fetch(FetchDescriptor<QueryTab>(sortBy: [SortDescriptor(\.sortOrder)]))) ?? []
         let tab = QueryTab()
-        tabs.append(tab)
+        tab.sortOrder = (tabs.last?.sortOrder ?? -1) + 1
+        modelContext.insert(tab)
         selectedTab = tab.id
-    }
-
-    var selectedQueryTab: QueryTab? {
-        guard let selectedTab else { return nil }
-        return tabs.first { $0.id == selectedTab }
     }
 }

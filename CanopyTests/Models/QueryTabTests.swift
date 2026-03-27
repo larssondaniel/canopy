@@ -12,14 +12,14 @@ struct QueryTabTests {
         #expect(tab.variables == "")
         #expect(tab.method == .post)
         #expect(tab.headers.isEmpty)
-        #expect(tab.authConfiguration.authType == .none)
+        #expect(tab.authConfig == .none)
         #expect(tab.responseBody == nil)
         #expect(tab.responseStatusCode == nil)
         #expect(tab.responseTime == nil)
         #expect(tab.responseSize == nil)
         #expect(tab.responseHeaders == nil)
         #expect(tab.isLoading == false)
-        #expect(tab.error == nil)
+        #expect(tab.lastError == nil)
         #expect(tab.currentTask == nil)
     }
 

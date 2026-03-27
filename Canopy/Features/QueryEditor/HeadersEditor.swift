@@ -26,7 +26,7 @@ struct HeadersEditor: View {
 
             HStack {
                 Button("Add Header") {
-                    tab.headers.append(HeaderEntry())
+                    tab.headers.append(CodableHeader())
                 }
                 .padding(8)
                 Spacer()

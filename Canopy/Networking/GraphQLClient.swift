@@ -4,13 +4,13 @@ import Foundation
 struct GraphQLClient {
 
     func send(tab: QueryTab) async {
-        tab.error = nil
+        tab.lastError = nil
         tab.isLoading = true
         defer { tab.isLoading = false }
 
         // Validate URL
         guard let url = URL(string: tab.endpoint), url.scheme != nil, url.host != nil else {
-            tab.error = "Invalid URL. Please enter a valid endpoint."
+            tab.lastError = "Invalid URL. Please enter a valid endpoint."
             return
         }
 
@@ -20,18 +20,19 @@ struct GraphQLClient {
         if !trimmedVars.isEmpty {
             guard let data = trimmedVars.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) else {
-                tab.error = "Invalid JSON in variables."
+                tab.lastError = "Invalid JSON in variables."
                 return
             }
             variablesObject = json
         }
 
         // Build request
+        let auth = tab.authConfig.toAuthConfiguration()
         var request: URLRequest
         do {
-            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: tab.authConfiguration, headers: tab.headers)
+            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: auth, headers: tab.headers)
         } catch {
-            tab.error = "Failed to build request: \(error.localizedDescription)"
+            tab.lastError = "Failed to build request: \(error.localizedDescription)"
             return
         }
 
@@ -42,7 +43,7 @@ struct GraphQLClient {
             let elapsed = CFAbsoluteTimeGetCurrent() - start
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                tab.error = "Unexpected response type."
+                tab.lastError = "Unexpected response type."
                 return
             }
 
@@ -56,24 +57,24 @@ struct GraphQLClient {
                 }
             )
             tab.responseBody = prettyPrintJSON(data) ?? String(data: data, encoding: .utf8) ?? ""
-            tab.error = nil
+            tab.lastError = nil
         } catch let urlError as URLError where urlError.code == .cancelled {
-            // Request was cancelled — don't overwrite state
+            // Request was cancelled -- don't overwrite state
             return
         } catch is CancellationError {
             return
         } catch let urlError as URLError {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
-            tab.error = friendlyError(for: urlError)
+            tab.lastError = friendlyError(for: urlError)
         } catch {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
-            tab.error = error.localizedDescription
+            tab.lastError = error.localizedDescription
         }
     }
 
     // MARK: - Request Building
 
-    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, auth: AuthConfiguration, headers: [HeaderEntry]) throws -> URLRequest {
+    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, auth: AuthConfiguration, headers: [CodableHeader]) throws -> URLRequest {
         var request: URLRequest
 
         switch method {
