@@ -1,8 +1,24 @@
 import SwiftUI
 
 struct Sidebar: View {
+    @Environment(AppState.self) private var appState
+
     var body: some View {
-        List {
+        @Bindable var appState = appState
+
+        List(selection: $appState.selectedTab) {
+            Section("Queries") {
+                if appState.tabs.isEmpty {
+                    Text("No queries yet")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appState.tabs) { tab in
+                        Label(tab.name, systemImage: "arrow.right.circle")
+                            .tag(tab.id)
+                    }
+                }
+            }
+
             Section("Collections") {
                 Text("No collections yet")
                     .foregroundStyle(.secondary)
@@ -17,14 +33,12 @@ struct Sidebar: View {
         .navigationTitle("Canopy")
         .toolbar {
             ToolbarItem {
-                Button(action: {}) {
-                    Label("Add", systemImage: "plus")
+                Button {
+                    appState.addTab()
+                } label: {
+                    Label("New Tab", systemImage: "plus")
                 }
             }
         }
     }
-}
-
-#Preview {
-    Sidebar()
 }
