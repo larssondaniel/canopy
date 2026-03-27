@@ -1,12 +1,21 @@
 import SwiftUI
 import SwiftData
 
-struct VariableGridView: View {
-    @Binding var environments: [AppEnvironment]
-    @State private var newKeyName = ""
-    @State private var editingKey: String?
+private let keyColumnWidth: CGFloat = 140
+private let valueColumnWidth: CGFloat = 200
+private let iconLeading: CGFloat = 20
+private let rowHeight: CGFloat = 30
 
-    /// All variable keys shared across environments, in stable order
+struct VariableGridView: View {
+    @SwiftUI.Environment(\.modelContext) private var modelContext
+    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
+    @Query private var activeStates: [ActiveEnvironmentState]
+
+    @State private var newKeyName = ""
+    @State private var showNewEnvironmentPopover = false
+    @State private var editingNameID: UUID?
+    @State private var hoveredRow: String?
+
     private var allKeys: [String] {
         var seen = Set<String>()
         var keys: [String] = []
@@ -21,94 +30,165 @@ struct VariableGridView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if environments.isEmpty {
-                ContentUnavailableView {
-                    Label("No Environments", systemImage: "tray")
-                } description: {
-                    Text("Add an environment to start defining variables.")
-                }
-                .frame(maxHeight: .infinity)
-            } else {
+        if environments.isEmpty {
+            emptyState
+        } else {
+            gridBody
+        }
+    }
+
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No Environments", systemImage: "tray")
+        } description: {
+            Text("Click + to create your first environment.")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
+            addEnvironmentButton
+                .padding()
+        }
+    }
+
+    private var gridBody: some View {
+        GeometryReader { geometry in
+            ScrollView([.horizontal, .vertical]) {
                 gridContent
+                    .padding(.leading, 20)
+                    .padding(.top, 16)
+                    .frame(
+                        minWidth: geometry.size.width,
+                        minHeight: geometry.size.height,
+                        alignment: .topLeading
+                    )
             }
         }
     }
 
-    @ViewBuilder
     private var gridContent: some View {
-        ScrollView([.horizontal, .vertical]) {
-            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                // Header row
+        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+            // Header row
+            GridRow {
+                Color.clear
+                    .gridCellUnsizedAxes([.horizontal, .vertical])
+                    .frame(width: keyColumnWidth)
+
+                ForEach(environments) { env in
+                    environmentColumnHeader(for: env)
+                        .frame(width: valueColumnWidth, alignment: .leading)
+                }
+
+                addEnvironmentButton
+                    .gridCellUnsizedAxes([.vertical])
+                    .padding(.horizontal, 12)
+            }
+            .frame(height: rowHeight)
+
+            Divider()
+                .gridCellUnsizedAxes(.horizontal)
+
+            // Variable rows
+            ForEach(allKeys, id: \.self) { key in
                 GridRow {
-                    Text("Variable")
-                        .fontWeight(.semibold)
-                        .frame(width: 150, alignment: .leading)
-                        .padding(8)
+                    Text(key)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.blue)
+                        .lineLimit(1)
+                        .frame(width: keyColumnWidth, alignment: .leading)
+                        .contextMenu {
+                            Button("Delete Variable", role: .destructive) {
+                                removeKey(key)
+                            }
+                        }
 
                     ForEach(environments) { env in
-                        Text(env.name.isEmpty ? "Untitled" : env.name)
-                            .fontWeight(.semibold)
-                            .frame(minWidth: 180, alignment: .leading)
-                            .padding(8)
+                        valueCell(for: env, key: key)
+                            .frame(width: valueColumnWidth, alignment: .leading)
                     }
                 }
-                .background(Color(nsColor: .controlBackgroundColor))
-
-                Divider()
-
-                // Variable rows
-                ForEach(allKeys, id: \.self) { key in
-                    GridRow {
-                        HStack {
-                            Text(key)
-                                .font(.system(.body, design: .monospaced))
-                            Spacer()
-                            Button {
-                                removeKey(key)
-                            } label: {
-                                Image(systemName: "minus.circle")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .frame(width: 150, alignment: .leading)
-                        .padding(8)
-
-                        ForEach(environments) { env in
-                            let binding = Binding<String>(
-                                get: { env.variables[key] ?? "" },
-                                set: { env.variables[key] = $0 }
-                            )
-                            TextField("Value", text: binding)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                                .frame(minWidth: 180)
-                                .padding(4)
-                        }
-                    }
+                .frame(height: rowHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(hoveredRow == key ? Color.primary.opacity(0.06) : Color.clear)
+                )
+                .onHover { hovering in
+                    hoveredRow = hovering ? key : nil
                 }
 
                 Divider()
-
-                // Add variable row
-                GridRow {
-                    HStack {
-                        TextField("New variable name", text: $newKeyName)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.body, design: .monospaced))
-                            .onSubmit {
-                                addKey()
-                            }
-                        Button("Add") {
-                            addKey()
-                        }
-                        .disabled(newKeyName.trimmingCharacters(in: .whitespaces).isEmpty || !isValidKeyName(newKeyName) || allKeys.contains(newKeyName.trimmingCharacters(in: .whitespaces)))
-                    }
-                    .frame(width: 150)
-                    .padding(8)
-                }
+                    .gridCellUnsizedAxes(.horizontal)
             }
+
+            // New key row
+            GridRow {
+                TextField("name", text: $newKeyName)
+                    .textFieldStyle(.plain)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: keyColumnWidth, alignment: .leading)
+                    .onSubmit { addKey() }
+            }
+            .frame(height: rowHeight)
+        }
+    }
+
+    private func valueCell(for env: AppEnvironment, key: String) -> some View {
+        let binding = Binding<String>(
+            get: { env.variables[key] ?? "" },
+            set: { env.variables[key] = $0 }
+        )
+        return TextField("value", text: binding)
+            .textFieldStyle(.plain)
+            .font(.system(.body, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.leading, iconLeading)
+    }
+
+    private func environmentColumnHeader(for env: AppEnvironment) -> some View {
+        HStack(spacing: 0) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .foregroundStyle(env.environmentColor.color)
+                .font(.system(size: 11))
+                .frame(width: iconLeading)
+
+            if editingNameID == env.id {
+                TextField("Name", text: Binding(
+                    get: { env.name },
+                    set: { env.name = $0 }
+                ))
+                .textFieldStyle(.plain)
+                .font(.system(.body, weight: .medium))
+                .frame(width: 100)
+                .onSubmit { editingNameID = nil }
+            } else {
+                Text(env.name.isEmpty ? "Untitled" : env.name)
+                    .font(.system(.body, weight: .medium))
+                    .lineLimit(1)
+            }
+        }
+        .onTapGesture(count: 2) {
+            editingNameID = env.id
+        }
+        .contextMenu {
+            Button("Rename") { editingNameID = env.id }
+            Divider()
+            Button("Delete", role: .destructive) { deleteEnvironment(env) }
+        }
+    }
+
+    private var addEnvironmentButton: some View {
+        Button {
+            showNewEnvironmentPopover = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Add Environment")
+        .popover(isPresented: $showNewEnvironmentPopover) {
+            NewEnvironmentPopover(isPresented: $showNewEnvironmentPopover)
         }
     }
 
@@ -125,6 +205,14 @@ struct VariableGridView: View {
         for env in environments {
             env.variables.removeValue(forKey: key)
         }
+    }
+
+    private func deleteEnvironment(_ env: AppEnvironment) {
+        if let activeState = activeStates.first,
+           activeState.activeEnvironmentID == env.id {
+            activeState.activeEnvironmentID = nil
+        }
+        modelContext.delete(env)
     }
 
     private func isValidKeyName(_ name: String) -> Bool {

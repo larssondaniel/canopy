@@ -14,36 +14,75 @@ struct ContentView: View {
     }
 
     var body: some View {
-        @Bindable var appState = appState
-
         NavigationSplitView {
             Sidebar()
         } detail: {
-            if let selectedTab = appState.selectedTab,
-               let tab = tabs.first(where: { $0.id == selectedTab }) {
-                QueryClientView(tab: tab, activeEnvironment: activeEnvironment)
-            } else {
-                VStack(spacing: 12) {
-                    Text("Canopy")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                    Text("A native GraphQL client for macOS")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                    Text("Press \(Image(systemName: "command")) T to create a new query tab")
-                        .foregroundStyle(.tertiary)
+            VStack(spacing: 0) {
+                // Tab bar — shown when 2+ tabs are open
+                if appState.openTabs.count >= 2 {
+                    TabBarView()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Content area — routes based on selected tab type
+                contentForSelectedTab
+            }
+            .toolbar {
+                // '+' button in toolbar when tab bar is hidden (0-1 tabs)
+                if appState.openTabs.count < 2 {
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            appState.addTab()
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .help("New Tab")
+                    }
+                }
+
+                ToolbarItem(placement: .automatic) {
+                    EnvironmentPicker()
+                }
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                EnvironmentPicker()
-            }
-        }
         .onAppear {
             appState.modelContext = modelContext
+            appState.initializeTabs(from: tabs)
         }
+    }
+
+    @ViewBuilder
+    private var contentForSelectedTab: some View {
+        switch appState.selectedTab {
+        case .query(let id):
+            if let tab = tabs.first(where: { $0.id == id }) {
+                QueryClientView(tab: tab, activeEnvironment: activeEnvironment)
+            } else {
+                welcomeView
+            }
+        case .environments:
+            EnvironmentContentView()
+        case nil:
+            welcomeView
+        }
+    }
+
+    @ViewBuilder
+    private var welcomeView: some View {
+        VStack(spacing: 12) {
+            Text("Canopy")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            Text("A native GraphQL client for macOS")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            Button("New Tab") {
+                appState.addTab()
+            }
+            .controlSize(.large)
+            Text("or press \(Image(systemName: "command")) T")
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

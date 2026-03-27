@@ -19,6 +19,27 @@ struct CanopyApp: App {
                 }
                 .keyboardShortcut("t", modifiers: .command)
             }
+
+            CommandGroup(after: .newItem) {
+                Button("Close Tab") {
+                    if let tab = appState.selectedTab {
+                        appState.closeTab(tab)
+                    }
+                }
+                .keyboardShortcut("w", modifiers: .command)
+
+                Divider()
+
+                Button("Show Next Tab") {
+                    appState.cycleTab(forward: true)
+                }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+
+                Button("Show Previous Tab") {
+                    appState.cycleTab(forward: false)
+                }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+            }
         }
     }
 }

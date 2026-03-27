@@ -2,11 +2,10 @@ import SwiftUI
 import SwiftData
 
 struct EnvironmentPicker: View {
+    @SwiftUI.Environment(AppState.self) private var appState
     @SwiftUI.Environment(\.modelContext) private var modelContext
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
     @Query private var activeStates: [ActiveEnvironmentState]
-
-    @State private var showManagementSheet = false
 
     private var activeState: ActiveEnvironmentState? {
         activeStates.first
@@ -38,12 +37,11 @@ struct EnvironmentPicker: View {
                     Button {
                         setActiveEnvironment(env.id)
                     } label: {
-                        HStack {
+                        Label {
                             Text(env.name.isEmpty ? "Untitled" : env.name)
-                            if activeState?.activeEnvironmentID == env.id {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
+                        } icon: {
+                            Image(systemName: "square.stack.3d.up.fill")
+                                .foregroundStyle(env.environmentColor.color)
                         }
                     }
                 }
@@ -52,18 +50,40 @@ struct EnvironmentPicker: View {
             Divider()
 
             Button("Manage Environments...") {
-                showManagementSheet = true
+                appState.openEnvironmentsTab()
             }
         } label: {
-            Label {
-                Text(activeEnvironment?.name ?? "No Environment")
-            } icon: {
-                Image(systemName: "globe")
+            pillLabel
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    @ViewBuilder
+    private var pillLabel: some View {
+        HStack(spacing: 4) {
+            if let env = activeEnvironment {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .foregroundStyle(env.environmentColor.color)
+                    .font(.system(size: 11, weight: .medium))
+                Text(env.name.isEmpty ? "Untitled" : env.name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+            } else {
+                Text("No Environment")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.tertiary)
         }
-        .sheet(isPresented: $showManagementSheet) {
-            EnvironmentManagementSheet()
-        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(.quaternary)
+        )
     }
 
     private func setActiveEnvironment(_ environmentID: UUID?) {
