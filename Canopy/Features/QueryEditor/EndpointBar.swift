@@ -58,8 +58,11 @@ struct EndpointBar: View {
             }
             .frame(width: 80)
 
-            TextField("https://example.com/graphql", text: $tab.endpoint)
-                .textFieldStyle(.roundedBorder)
+            TemplateTextField(
+                text: $tab.endpoint,
+                placeholder: "https://example.com/graphql",
+                activeEnvironment: activeEnvironment
+            )
 
             if tab.isLoading {
                 Button("Cancel") {

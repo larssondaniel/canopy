@@ -13,7 +13,7 @@ struct RequestPane: View {
             VSplitView {
                 QueryEditorView(tab: tab)
                     .frame(minHeight: 100)
-                BottomPanel(tab: tab)
+                BottomPanel(tab: tab, activeEnvironment: activeEnvironment)
                     .frame(minHeight: 80)
             }
         }
