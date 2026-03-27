@@ -1,0 +1,4 @@
+{
+  "setup": "xcodegen generate",
+  "run": "make open"
+}

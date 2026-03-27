@@ -57,8 +57,10 @@ struct GraphQLClient {
             )
             tab.responseBody = prettyPrintJSON(data) ?? String(data: data, encoding: .utf8) ?? ""
             tab.error = nil
-        } catch is CancellationError {
+        } catch let urlError as URLError where urlError.code == .cancelled {
             // Request was cancelled — don't overwrite state
+            return
+        } catch is CancellationError {
             return
         } catch let urlError as URLError {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
