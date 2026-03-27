@@ -70,3 +70,6 @@ DerivedData/
 
 # macOS
 .DS_Store
+
+# Docs (brainstorms, plans, etc.)
+docs/
