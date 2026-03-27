@@ -10,6 +10,7 @@ final class QueryTab: Identifiable {
     var variables: String = ""
     var method: HTTPMethod = .post
     var headers: [HeaderEntry] = []
+    var authConfiguration: AuthConfiguration = .none
 
     // Response state
     var responseBody: String?
