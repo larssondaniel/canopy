@@ -2,6 +2,7 @@ import SwiftUI
 
 struct EndpointBar: View {
     @Bindable var tab: QueryTab
+    var activeEnvironment: AppEnvironment?
     var onRun: () -> Void
     var onCancel: () -> Void
 

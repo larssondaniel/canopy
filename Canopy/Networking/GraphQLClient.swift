@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 struct GraphQLClient {
 
-    func send(tab: QueryTab) async {
+    func send(tab: QueryTab, environmentVariables: [String: String]? = nil) async {
         tab.lastError = nil
         tab.isLoading = true
         defer { tab.isLoading = false }
