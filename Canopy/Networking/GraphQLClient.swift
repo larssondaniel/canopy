@@ -8,14 +8,48 @@ struct GraphQLClient {
         tab.isLoading = true
         defer { tab.isLoading = false }
 
+        // Template substitution
+        let resolvedEndpoint: String
+        let resolvedVariables: String
+        var resolvedHeaders = tab.headers
+        var resolvedAuth = tab.authConfig
+
+        if let envVars = environmentVariables {
+            resolvedEndpoint = TemplateEngine.substitute(in: tab.endpoint, variables: envVars).resolvedText
+            resolvedVariables = TemplateEngine.substitute(in: tab.variables, variables: envVars).resolvedText
+
+            for i in resolvedHeaders.indices {
+                resolvedHeaders[i].value = TemplateEngine.substitute(in: resolvedHeaders[i].value, variables: envVars).resolvedText
+            }
+
+            let authConfig = resolvedAuth.toAuthConfiguration()
+            switch authConfig {
+            case .bearer(let token):
+                let resolved = TemplateEngine.substitute(in: token, variables: envVars).resolvedText
+                resolvedAuth = CodableAuth(authConfiguration: .bearer(token: resolved))
+            case .apiKey(let headerName, let value):
+                let resolvedValue = TemplateEngine.substitute(in: value, variables: envVars).resolvedText
+                resolvedAuth = CodableAuth(authConfiguration: .apiKey(headerName: headerName, value: resolvedValue))
+            case .basic(let username, let password):
+                let resolvedUser = TemplateEngine.substitute(in: username, variables: envVars).resolvedText
+                let resolvedPass = TemplateEngine.substitute(in: password, variables: envVars).resolvedText
+                resolvedAuth = CodableAuth(authConfiguration: .basic(username: resolvedUser, password: resolvedPass))
+            case .none:
+                break
+            }
+        } else {
+            resolvedEndpoint = tab.endpoint
+            resolvedVariables = tab.variables
+        }
+
         // Validate URL
-        guard let url = URL(string: tab.endpoint), url.scheme != nil, url.host != nil else {
+        guard let url = URL(string: resolvedEndpoint), url.scheme != nil, url.host != nil else {
             tab.lastError = "Invalid URL. Please enter a valid endpoint."
             return
         }
 
         // Parse variables JSON if non-empty
-        let trimmedVars = tab.variables.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVars = resolvedVariables.trimmingCharacters(in: .whitespacesAndNewlines)
         var variablesObject: Any?
         if !trimmedVars.isEmpty {
             guard let data = trimmedVars.data(using: .utf8),
@@ -27,10 +61,10 @@ struct GraphQLClient {
         }
 
         // Build request
-        let auth = tab.authConfig.toAuthConfiguration()
+        let auth = resolvedAuth.toAuthConfiguration()
         var request: URLRequest
         do {
-            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: auth, headers: tab.headers)
+            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: auth, headers: resolvedHeaders)
         } catch {
             tab.lastError = "Failed to build request: \(error.localizedDescription)"
             return
