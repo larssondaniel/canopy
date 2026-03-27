@@ -11,13 +11,9 @@ final class AppState {
         tabs.append(tab)
         selectedTab = tab.id
     }
-}
 
-struct QueryTab: Identifiable {
-    let id = UUID()
-    var name: String = "Untitled"
-    var endpoint: String = ""
-    var query: String = ""
-    var variables: String = ""
-    var response: String?
+    var selectedQueryTab: QueryTab? {
+        guard let selectedTab else { return nil }
+        return tabs.first { $0.id == selectedTab }
+    }
 }
