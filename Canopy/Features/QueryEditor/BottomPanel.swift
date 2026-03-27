@@ -9,6 +9,7 @@ struct BottomPanel: View {
             Picker("", selection: $selectedPanel) {
                 Text("Variables").tag(0)
                 Text("Headers").tag(1)
+                Text("Auth").tag(2)
             }
             .pickerStyle(.segmented)
             .padding(8)
@@ -18,8 +19,10 @@ struct BottomPanel: View {
             switch selectedPanel {
             case 0:
                 VariablesEditor(tab: tab)
-            default:
+            case 1:
                 HeadersEditor(tab: tab)
+            default:
+                AuthEditor(tab: tab)
             }
         }
     }

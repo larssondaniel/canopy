@@ -29,7 +29,7 @@ struct GraphQLClient {
         // Build request
         var request: URLRequest
         do {
-            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, headers: tab.headers)
+            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: tab.authConfiguration, headers: tab.headers)
         } catch {
             tab.error = "Failed to build request: \(error.localizedDescription)"
             return
@@ -73,7 +73,7 @@ struct GraphQLClient {
 
     // MARK: - Request Building
 
-    private func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, headers: [HeaderEntry]) throws -> URLRequest {
+    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, auth: AuthConfiguration, headers: [HeaderEntry]) throws -> URLRequest {
         var request: URLRequest
 
         switch method {
@@ -104,7 +104,12 @@ struct GraphQLClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        // User-defined headers override defaults
+        // Auth headers (override defaults, overridden by user headers)
+        if let authHeader = auth.header {
+            request.setValue(authHeader.value, forHTTPHeaderField: authHeader.name)
+        }
+
+        // User-defined headers override defaults and auth
         for header in headers where !header.key.trimmingCharacters(in: .whitespaces).isEmpty {
             request.setValue(header.value, forHTTPHeaderField: header.key)
         }

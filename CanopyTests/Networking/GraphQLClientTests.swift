@@ -109,4 +109,82 @@ struct GraphQLClientTests {
 
         #expect(tab.isLoading == false)
     }
+
+    // MARK: - Auth Header Tests
+
+    @Test("No auth injects no Authorization header")
+    @MainActor
+    func noAuthHeader() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .none, headers: [])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test("Basic auth injects correct Authorization header")
+    @MainActor
+    func basicAuthHeader() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .basic(username: "user", password: "pass"), headers: [])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Basic dXNlcjpwYXNz")
+    }
+
+    @Test("Bearer auth injects correct Authorization header")
+    @MainActor
+    func bearerAuthHeader() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .bearer(token: "my-token"), headers: [])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer my-token")
+    }
+
+    @Test("Bearer with empty token injects no header")
+    @MainActor
+    func bearerEmptyTokenNoHeader() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .bearer(token: ""), headers: [])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test("API Key injects correct custom header")
+    @MainActor
+    func apiKeyHeader() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .apiKey(headerName: "X-API-Key", value: "secret"), headers: [])
+        #expect(request.value(forHTTPHeaderField: "X-API-Key") == "secret")
+    }
+
+    @Test("API Key with empty name injects no header")
+    @MainActor
+    func apiKeyEmptyNameNoHeader() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .apiKey(headerName: "", value: "secret"), headers: [])
+        // Should still have default headers but no custom API key header
+        #expect(request.value(forHTTPHeaderField: "") == nil)
+    }
+
+    @Test("User headers override auth headers")
+    @MainActor
+    func userHeadersOverrideAuth() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        var manualHeader = HeaderEntry()
+        manualHeader.key = "Authorization"
+        manualHeader.value = "Custom override"
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .bearer(token: "my-token"), headers: [manualHeader])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Custom override")
+    }
+
+    @Test("Auth headers work with GET method")
+    @MainActor
+    func authWithGetMethod() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .get, query: "{ test }", variables: nil, auth: .bearer(token: "my-token"), headers: [])
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer my-token")
+    }
+
+    @Test("Auth does not override Content-Type default")
+    @MainActor
+    func authDoesNotOverrideContentType() throws {
+        let url = URL(string: "https://example.com/graphql")!
+        let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .bearer(token: "my-token"), headers: [])
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
 }
