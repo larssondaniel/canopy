@@ -3,7 +3,7 @@ import SwiftData
 
 private let keyColumnWidth: CGFloat = 140
 private let valueColumnWidth: CGFloat = 200
-private let iconLeading: CGFloat = 20
+private let iconLeading: CGFloat = 26
 private let rowHeight: CGFloat = 30
 
 private struct CellID: Hashable {
@@ -99,15 +99,17 @@ struct VariableGridView: View {
                 addEnvironmentButton
                     .gridCellUnsizedAxes([.vertical])
                     .padding(.horizontal, 12)
+
+                trailingSpacer
             }
             .frame(height: rowHeight)
 
             Divider()
-                .gridCellUnsizedAxes(.horizontal)
 
             // Variable rows
             ForEach(allKeys, id: \.self) { key in
                 GridRow {
+                    // Key column
                     HStack(spacing: 0) {
                         Text(key)
                             .font(.system(.body, design: .monospaced))
@@ -121,7 +123,7 @@ struct VariableGridView: View {
                                 removeKey(key)
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 14))
                                     .foregroundStyle(.tertiary)
                             }
                             .buttonStyle(.plain)
@@ -129,15 +131,29 @@ struct VariableGridView: View {
                     }
                     .frame(width: keyColumnWidth, alignment: .leading)
                     .contextMenu {
-                        Button("Delete Variable", role: .destructive) {
-                            removeKey(key)
-                        }
+                        Button("Duplicate") { duplicateKey(key) }
+                        Divider()
+                        Button("Delete Variable", role: .destructive) { removeKey(key) }
                     }
 
+                    // Value columns
                     ForEach(environments) { env in
                         valueCell(for: env, key: key)
                             .frame(width: valueColumnWidth, alignment: .topLeading)
                     }
+
+                    // Row "..." menu — trailing, visible on hover
+                    if hoveredRow == key {
+                        rowMenu(for: key)
+                            .gridCellUnsizedAxes([.vertical])
+                            .padding(.horizontal, 12)
+                    } else {
+                        Color.clear
+                            .gridCellUnsizedAxes([.horizontal, .vertical])
+                            .frame(width: 36)
+                    }
+
+                    trailingSpacer
                 }
                 .frame(minHeight: rowHeight)
                 .background(
@@ -149,7 +165,6 @@ struct VariableGridView: View {
                 }
 
                 Divider()
-                    .gridCellUnsizedAxes(.horizontal)
             }
 
             // New key row
@@ -160,10 +175,36 @@ struct VariableGridView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: keyColumnWidth, alignment: .leading)
                     .onSubmit { addKey() }
+
+                ForEach(environments) { env in
+                    Text("value")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.quaternary)
+                        .lineLimit(1)
+                        .padding(.leading, iconLeading)
+                        .frame(width: valueColumnWidth, alignment: .leading)
+                }
+
+                Color.clear
+                    .gridCellUnsizedAxes([.horizontal, .vertical])
+                    .frame(width: 36)
+
+                trailingSpacer
             }
             .frame(height: rowHeight)
+
+            Divider()
         }
     }
+
+    /// A trailing spacer column that stretches to fill remaining viewport width
+    private var trailingSpacer: some View {
+        Color.clear
+            .gridCellUnsizedAxes(.vertical)
+            .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Value Cell
 
     @ViewBuilder
     private func valueCell(for env: AppEnvironment, key: String) -> some View {
@@ -197,13 +238,32 @@ struct VariableGridView: View {
         }
     }
 
+    // MARK: - Row Menu
+
+    private func rowMenu(for key: String) -> some View {
+        Menu {
+            Button("Duplicate") { duplicateKey(key) }
+            Divider()
+            Button("Delete", role: .destructive) { removeKey(key) }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 20)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    // MARK: - Environment Column Header
+
     private func environmentColumnHeader(for env: AppEnvironment) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
             // Icon — click to change color
             Image(systemName: "square.stack.3d.up.fill")
                 .foregroundStyle(env.environmentColor.color)
-                .font(.system(size: 11))
-                .frame(width: iconLeading)
+                .font(.system(size: 14))
                 .onTapGesture {
                     colorPickerEnvID = env.id
                 }
@@ -250,7 +310,7 @@ struct VariableGridView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .frame(width: 16, height: 16)
                 }
@@ -305,6 +365,8 @@ struct VariableGridView: View {
         .padding(12)
     }
 
+    // MARK: - Add Environment Button
+
     private var addEnvironmentButton: some View {
         Button {
             showNewEnvironmentPopover = true
@@ -320,6 +382,8 @@ struct VariableGridView: View {
         }
     }
 
+    // MARK: - Actions
+
     private func addKey() {
         let trimmed = newKeyName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, isValidKeyName(trimmed), !allKeys.contains(trimmed) else { return }
@@ -332,6 +396,18 @@ struct VariableGridView: View {
     private func removeKey(_ key: String) {
         for env in environments {
             env.variables.removeValue(forKey: key)
+        }
+    }
+
+    private func duplicateKey(_ key: String) {
+        var newKey = "\(key)_copy"
+        var counter = 1
+        while allKeys.contains(newKey) {
+            counter += 1
+            newKey = "\(key)_copy\(counter)"
+        }
+        for env in environments {
+            env.variables[newKey] = env.variables[key] ?? ""
         }
     }
 
