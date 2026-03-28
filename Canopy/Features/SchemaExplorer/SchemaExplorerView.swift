@@ -2,12 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct SchemaExplorerView: View {
-    @SwiftUI.Environment(AppState.self) private var appState
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
-    @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
-    @Query private var activeStates: [ActiveEnvironmentState]
-    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
 
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -15,32 +10,10 @@ struct SchemaExplorerView: View {
     @State private var expandedTypes: Set<String> = []
     @State private var selectedTypeName: String?
 
-    /// Resolve the current tab's endpoint using environment variables.
-    private var resolvedEndpoint: String? {
-        guard let selected = appState.selectedTab,
-              let queryID = selected.queryID,
-              let tab = tabs.first(where: { $0.id == queryID }) else {
-            return nil
-        }
-        let endpoint = tab.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !endpoint.isEmpty else { return nil }
-
-        if let envVars = activeEnvironment?.variables {
-            return TemplateEngine.substitute(in: endpoint, variables: envVars).resolvedText
-        }
-        return endpoint
-    }
-
-    private var activeEnvironment: AppEnvironment? {
-        guard let activeID = activeStates.first?.activeEnvironmentID else { return nil }
-        return environments.first { $0.id == activeID }
-    }
-
     var body: some View {
         Group {
-            if let endpoint = resolvedEndpoint {
-                let normalized = SchemaStore.normalizeEndpoint(endpoint)
-                schemaContent(for: normalized)
+            if let endpoint = schemaStore.activeEndpoint {
+                schemaContent(for: endpoint)
             } else {
                 ContentUnavailableView(
                     "No Endpoint",
@@ -62,11 +35,17 @@ struct SchemaExplorerView: View {
     private func schemaContent(for endpoint: String) -> some View {
         switch schemaStore.state(for: endpoint) {
         case .idle:
-            ContentUnavailableView(
-                "Schema Not Loaded",
-                systemImage: "arrow.down.circle",
-                description: Text("Run a query to load the schema.")
-            )
+            ContentUnavailableView {
+                Label("Schema Not Loaded", systemImage: "arrow.down.circle")
+            } description: {
+                Text("Load the schema to browse types and fields.")
+            } actions: {
+                Button("Load Schema") {
+                    schemaStore.fetchSchema(endpoint: endpoint, force: true)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
         case .loading:
             VStack(spacing: 8) {
                 ProgressView()
@@ -84,7 +63,7 @@ struct SchemaExplorerView: View {
                 Text(message)
             } actions: {
                 Button("Retry") {
-                    triggerRefresh(endpoint: endpoint)
+                    schemaStore.fetchSchema(endpoint: endpoint, force: true)
                 }
             }
         }
@@ -129,9 +108,7 @@ struct SchemaExplorerView: View {
             .onChange(of: selectedTypeName) { _, target in
                 guard let target else { return }
                 Task { @MainActor in
-                    // Expand parent group for the target type
-                    if let schema = loadedSchema(endpoint: endpoint),
-                       let type = schema.type(named: target) {
+                    if let type = schema.type(named: target) {
                         expandedSections.insert(type.kind.displayName)
                         expandedTypes.insert(target)
                     }
@@ -144,7 +121,7 @@ struct SchemaExplorerView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        triggerRefresh(endpoint: endpoint)
+                        schemaStore.fetchSchema(endpoint: endpoint, force: true)
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -228,30 +205,6 @@ struct SchemaExplorerView: View {
     private func filteredFields(_ fields: [GraphQLField]) -> [GraphQLField] {
         guard !debouncedSearchText.isEmpty else { return fields }
         return fields.filter { $0.name.localizedStandardContains(debouncedSearchText) }
-    }
-
-    // MARK: - Helpers
-
-    private func loadedSchema(endpoint: String) -> GraphQLSchema? {
-        if case .loaded(let schema) = schemaStore.state(for: endpoint) {
-            return schema
-        }
-        return nil
-    }
-
-    private func triggerRefresh(endpoint: String) {
-        guard let selected = appState.selectedTab,
-              let queryID = selected.queryID,
-              let tab = tabs.first(where: { $0.id == queryID }) else { return }
-
-        let auth = tab.authConfig.toAuthConfiguration()
-        schemaStore.fetchSchema(
-            endpoint: endpoint,
-            method: tab.method,
-            auth: auth,
-            headers: tab.headers,
-            force: true
-        )
     }
 }
 

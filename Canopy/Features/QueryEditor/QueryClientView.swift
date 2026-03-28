@@ -20,7 +20,7 @@ struct QueryClientView: View {
         tab.currentTask = Task {
             await client.send(tab: tab, environmentVariables: activeEnvironment?.variables)
 
-            // Auto-fetch schema after successful query if not already cached
+            // After successful query, update the active endpoint and auto-fetch schema
             if tab.lastError == nil, tab.responseStatusCode != nil {
                 let endpoint: String
                 if let envVars = activeEnvironment?.variables {
@@ -29,9 +29,16 @@ struct QueryClientView: View {
                     endpoint = tab.endpoint
                 }
 
+                let auth = tab.authConfig.toAuthConfiguration()
+                schemaStore.setActiveEndpoint(
+                    endpoint,
+                    method: tab.method,
+                    auth: auth,
+                    headers: tab.headers
+                )
+
                 let normalized = SchemaStore.normalizeEndpoint(endpoint)
                 if !schemaStore.state(for: normalized).isLoaded {
-                    let auth = tab.authConfig.toAuthConfiguration()
                     schemaStore.fetchSchema(
                         endpoint: normalized,
                         method: tab.method,

@@ -18,10 +18,46 @@ final class SchemaStore {
     }
 
     private(set) var schemasByEndpoint: [String: LoadState] = [:]
+    /// The endpoint the sidebar should display. Set explicitly on tab switch,
+    /// query success, or manual refresh — NOT computed from the live text field.
+    private(set) var activeEndpoint: String?
+    /// Cached request context for the active endpoint, so "Load Schema" / "Refresh"
+    /// buttons can fetch without needing access to the tab.
+    private var activeMethod: HTTPMethod = .post
+    private var activeAuth: AuthConfiguration = .none
+    private var activeHeaders: [CodableHeader] = []
     private var currentFetchTask: Task<Void, Never>?
 
     func state(for endpoint: String) -> LoadState {
         schemasByEndpoint[endpoint, default: .idle]
+    }
+
+    /// Update the active endpoint and its request context. Called on tab switch and query success.
+    func setActiveEndpoint(
+        _ endpoint: String?,
+        method: HTTPMethod = .post,
+        auth: AuthConfiguration = .none,
+        headers: [CodableHeader] = []
+    ) {
+        if let endpoint {
+            activeEndpoint = Self.normalizeEndpoint(endpoint)
+        } else {
+            activeEndpoint = nil
+        }
+        activeMethod = method
+        activeAuth = auth
+        activeHeaders = headers
+    }
+
+    /// Fetch schema using stored request context. Used by sidebar buttons.
+    func fetchSchema(endpoint: String, force: Bool = false) {
+        fetchSchema(
+            endpoint: endpoint,
+            method: activeMethod,
+            auth: activeAuth,
+            headers: activeHeaders,
+            force: force
+        )
     }
 
     /// Fetch the schema for the given endpoint. Skips if already loaded unless force is true.
