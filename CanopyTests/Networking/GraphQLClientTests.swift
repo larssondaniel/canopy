@@ -15,8 +15,8 @@ struct GraphQLClientTests {
 
         await client.send(tab: tab)
 
-        #expect(tab.error != nil)
-        #expect(tab.error?.contains("Invalid URL") == true)
+        #expect(tab.lastError != nil)
+        #expect(tab.lastError?.contains("Invalid URL") == true)
         #expect(tab.isLoading == false)
     }
 
@@ -29,7 +29,7 @@ struct GraphQLClientTests {
 
         await client.send(tab: tab)
 
-        #expect(tab.error != nil)
+        #expect(tab.lastError != nil)
         #expect(tab.isLoading == false)
     }
 
@@ -43,8 +43,8 @@ struct GraphQLClientTests {
 
         await client.send(tab: tab)
 
-        #expect(tab.error != nil)
-        #expect(tab.error?.contains("Invalid JSON") == true)
+        #expect(tab.lastError != nil)
+        #expect(tab.lastError?.contains("Invalid JSON") == true)
         #expect(tab.isLoading == false)
     }
 
@@ -60,7 +60,7 @@ struct GraphQLClientTests {
         await client.send(tab: tab)
 
         // Error should be a network error, not a validation error
-        if let error = tab.error {
+        if let error = tab.lastError {
             #expect(!error.contains("Invalid JSON"))
         }
     }
@@ -78,7 +78,7 @@ struct GraphQLClientTests {
         await client.send(tab: tab)
 
         // Should not be a JSON validation error
-        if let error = tab.error {
+        if let error = tab.lastError {
             #expect(!error.contains("Invalid JSON"))
         }
     }
@@ -93,7 +93,7 @@ struct GraphQLClientTests {
 
         await client.send(tab: tab)
 
-        if let error = tab.error {
+        if let error = tab.lastError {
             #expect(!error.contains("Invalid JSON"))
         }
     }
@@ -165,9 +165,7 @@ struct GraphQLClientTests {
     @MainActor
     func userHeadersOverrideAuth() throws {
         let url = URL(string: "https://example.com/graphql")!
-        var manualHeader = HeaderEntry()
-        manualHeader.key = "Authorization"
-        manualHeader.value = "Custom override"
+        let manualHeader = CodableHeader(key: "Authorization", value: "Custom override")
         let request = try client.buildRequest(url: url, method: .post, query: "{ test }", variables: nil, auth: .bearer(token: "my-token"), headers: [manualHeader])
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Custom override")
     }

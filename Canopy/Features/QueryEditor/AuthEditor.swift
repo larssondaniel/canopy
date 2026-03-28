@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AuthEditor: View {
     @Bindable var tab: QueryTab
+    var activeEnvironment: AppEnvironment?
     @State private var selectedAuthType: AuthType = .none
     @State private var username = ""
     @State private var password = ""
@@ -26,12 +27,18 @@ struct AuthEditor: View {
                     .foregroundStyle(.secondary)
 
             case .basic:
-                TextField("Username", text: $username)
-                    .textFieldStyle(.roundedBorder)
+                TemplateTextField(
+                    text: $username,
+                    placeholder: "Username",
+                    activeEnvironment: activeEnvironment
+                )
                 HStack {
                     if showPassword {
-                        TextField("Password", text: $password)
-                            .textFieldStyle(.roundedBorder)
+                        TemplateTextField(
+                            text: $password,
+                            placeholder: "Password",
+                            activeEnvironment: activeEnvironment
+                        )
                     } else {
                         SecureField("Password", text: $password)
                             .textFieldStyle(.roundedBorder)
@@ -47,8 +54,11 @@ struct AuthEditor: View {
             case .bearer:
                 HStack {
                     if showToken {
-                        TextField("Token", text: $token)
-                            .textFieldStyle(.roundedBorder)
+                        TemplateTextField(
+                            text: $token,
+                            placeholder: "Token",
+                            activeEnvironment: activeEnvironment
+                        )
                     } else {
                         SecureField("Token", text: $token)
                             .textFieldStyle(.roundedBorder)
@@ -66,8 +76,11 @@ struct AuthEditor: View {
                     .textFieldStyle(.roundedBorder)
                 HStack {
                     if showApiKeyValue {
-                        TextField("Value", text: $apiKeyValue)
-                            .textFieldStyle(.roundedBorder)
+                        TemplateTextField(
+                            text: $apiKeyValue,
+                            placeholder: "Value",
+                            activeEnvironment: activeEnvironment
+                        )
                     } else {
                         SecureField("Value", text: $apiKeyValue)
                             .textFieldStyle(.roundedBorder)
@@ -99,8 +112,9 @@ struct AuthEditor: View {
     }
 
     private func loadFromTab() {
-        selectedAuthType = tab.authConfiguration.authType
-        switch tab.authConfiguration {
+        let auth = tab.authConfig.toAuthConfiguration()
+        selectedAuthType = auth.authType
+        switch auth {
         case .none:
             username = ""
             password = ""
@@ -132,15 +146,17 @@ struct AuthEditor: View {
     }
 
     private func syncToTab() {
+        let auth: AuthConfiguration
         switch selectedAuthType {
         case .none:
-            tab.authConfiguration = .none
+            auth = .none
         case .basic:
-            tab.authConfiguration = .basic(username: username, password: password)
+            auth = .basic(username: username, password: password)
         case .bearer:
-            tab.authConfiguration = .bearer(token: token)
+            auth = .bearer(token: token)
         case .apiKey:
-            tab.authConfiguration = .apiKey(headerName: apiKeyName, value: apiKeyValue)
+            auth = .apiKey(headerName: apiKeyName, value: apiKeyValue)
         }
+        tab.authConfig = CodableAuth(authConfiguration: auth)
     }
 }

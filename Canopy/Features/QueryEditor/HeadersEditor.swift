@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HeadersEditor: View {
     @Bindable var tab: QueryTab
+    var activeEnvironment: AppEnvironment?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -10,8 +11,11 @@ struct HeadersEditor: View {
                     HStack(spacing: 8) {
                         TextField("Header name", text: $entry.key)
                             .textFieldStyle(.roundedBorder)
-                        TextField("Value", text: $entry.value)
-                            .textFieldStyle(.roundedBorder)
+                        TemplateTextField(
+                            text: $entry.value,
+                            placeholder: "Value",
+                            activeEnvironment: activeEnvironment
+                        )
                         Button {
                             tab.headers.removeAll { $0.id == entry.id }
                         } label: {
@@ -26,7 +30,7 @@ struct HeadersEditor: View {
 
             HStack {
                 Button("Add Header") {
-                    tab.headers.append(HeaderEntry())
+                    tab.headers.append(CodableHeader())
                 }
                 .padding(8)
                 Spacer()

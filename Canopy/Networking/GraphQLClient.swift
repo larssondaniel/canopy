@@ -3,35 +3,70 @@ import Foundation
 @MainActor
 struct GraphQLClient {
 
-    func send(tab: QueryTab) async {
-        tab.error = nil
+    func send(tab: QueryTab, environmentVariables: [String: String]? = nil) async {
+        tab.lastError = nil
         tab.isLoading = true
         defer { tab.isLoading = false }
 
+        // Template substitution
+        let resolvedEndpoint: String
+        let resolvedVariables: String
+        var resolvedHeaders = tab.headers
+        var resolvedAuth = tab.authConfig
+
+        if let envVars = environmentVariables {
+            resolvedEndpoint = TemplateEngine.substitute(in: tab.endpoint, variables: envVars).resolvedText
+            resolvedVariables = TemplateEngine.substitute(in: tab.variables, variables: envVars).resolvedText
+
+            for i in resolvedHeaders.indices {
+                resolvedHeaders[i].value = TemplateEngine.substitute(in: resolvedHeaders[i].value, variables: envVars).resolvedText
+            }
+
+            let authConfig = resolvedAuth.toAuthConfiguration()
+            switch authConfig {
+            case .bearer(let token):
+                let resolved = TemplateEngine.substitute(in: token, variables: envVars).resolvedText
+                resolvedAuth = CodableAuth(authConfiguration: .bearer(token: resolved))
+            case .apiKey(let headerName, let value):
+                let resolvedValue = TemplateEngine.substitute(in: value, variables: envVars).resolvedText
+                resolvedAuth = CodableAuth(authConfiguration: .apiKey(headerName: headerName, value: resolvedValue))
+            case .basic(let username, let password):
+                let resolvedUser = TemplateEngine.substitute(in: username, variables: envVars).resolvedText
+                let resolvedPass = TemplateEngine.substitute(in: password, variables: envVars).resolvedText
+                resolvedAuth = CodableAuth(authConfiguration: .basic(username: resolvedUser, password: resolvedPass))
+            case .none:
+                break
+            }
+        } else {
+            resolvedEndpoint = tab.endpoint
+            resolvedVariables = tab.variables
+        }
+
         // Validate URL
-        guard let url = URL(string: tab.endpoint), url.scheme != nil, url.host != nil else {
-            tab.error = "Invalid URL. Please enter a valid endpoint."
+        guard let url = URL(string: resolvedEndpoint), url.scheme != nil, url.host != nil else {
+            tab.lastError = "Invalid URL. Please enter a valid endpoint."
             return
         }
 
         // Parse variables JSON if non-empty
-        let trimmedVars = tab.variables.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVars = resolvedVariables.trimmingCharacters(in: .whitespacesAndNewlines)
         var variablesObject: Any?
         if !trimmedVars.isEmpty {
             guard let data = trimmedVars.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) else {
-                tab.error = "Invalid JSON in variables."
+                tab.lastError = "Invalid JSON in variables."
                 return
             }
             variablesObject = json
         }
 
         // Build request
+        let auth = resolvedAuth.toAuthConfiguration()
         var request: URLRequest
         do {
-            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: tab.authConfiguration, headers: tab.headers)
+            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: auth, headers: resolvedHeaders)
         } catch {
-            tab.error = "Failed to build request: \(error.localizedDescription)"
+            tab.lastError = "Failed to build request: \(error.localizedDescription)"
             return
         }
 
@@ -42,7 +77,7 @@ struct GraphQLClient {
             let elapsed = CFAbsoluteTimeGetCurrent() - start
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                tab.error = "Unexpected response type."
+                tab.lastError = "Unexpected response type."
                 return
             }
 
@@ -56,24 +91,24 @@ struct GraphQLClient {
                 }
             )
             tab.responseBody = prettyPrintJSON(data) ?? String(data: data, encoding: .utf8) ?? ""
-            tab.error = nil
+            tab.lastError = nil
         } catch let urlError as URLError where urlError.code == .cancelled {
-            // Request was cancelled — don't overwrite state
+            // Request was cancelled -- don't overwrite state
             return
         } catch is CancellationError {
             return
         } catch let urlError as URLError {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
-            tab.error = friendlyError(for: urlError)
+            tab.lastError = friendlyError(for: urlError)
         } catch {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
-            tab.error = error.localizedDescription
+            tab.lastError = error.localizedDescription
         }
     }
 
     // MARK: - Request Building
 
-    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, auth: AuthConfiguration, headers: [HeaderEntry]) throws -> URLRequest {
+    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, auth: AuthConfiguration, headers: [CodableHeader]) throws -> URLRequest {
         var request: URLRequest
 
         switch method {

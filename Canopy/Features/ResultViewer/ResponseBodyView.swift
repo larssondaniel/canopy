@@ -5,7 +5,7 @@ struct ResponseBodyView: View {
 
     var body: some View {
         ZStack {
-            if let error = tab.error, tab.responseBody == nil {
+            if let error = tab.lastError, tab.responseBody == nil {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
