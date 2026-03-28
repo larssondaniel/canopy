@@ -6,6 +6,11 @@ private let valueColumnWidth: CGFloat = 200
 private let iconLeading: CGFloat = 20
 private let rowHeight: CGFloat = 30
 
+private struct CellID: Hashable {
+    let envID: UUID
+    let key: String
+}
+
 struct VariableGridView: View {
     @SwiftUI.Environment(\.modelContext) private var modelContext
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
@@ -14,7 +19,11 @@ struct VariableGridView: View {
     @State private var newKeyName = ""
     @State private var showNewEnvironmentPopover = false
     @State private var editingNameID: UUID?
+    @State private var editingCell: CellID?
     @State private var hoveredRow: String?
+    @State private var hoveredHeaderID: UUID?
+    @State private var colorPickerEnvID: UUID?
+    @State private var editPopoverEnvID: UUID?
 
     private var allKeys: [String] {
         var seen = Set<String>()
@@ -50,6 +59,11 @@ struct VariableGridView: View {
         }
     }
 
+    private func clearFocus() {
+        editingNameID = nil
+        editingCell = nil
+    }
+
     private var gridBody: some View {
         GeometryReader { geometry in
             ScrollView([.horizontal, .vertical]) {
@@ -61,6 +75,10 @@ struct VariableGridView: View {
                         minHeight: geometry.size.height,
                         alignment: .topLeading
                     )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        clearFocus()
+                    }
             }
         }
     }
@@ -103,10 +121,10 @@ struct VariableGridView: View {
 
                     ForEach(environments) { env in
                         valueCell(for: env, key: key)
-                            .frame(width: valueColumnWidth, alignment: .leading)
+                            .frame(width: valueColumnWidth, alignment: .topLeading)
                     }
                 }
-                .frame(height: rowHeight)
+                .frame(minHeight: rowHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
                         .fill(hoveredRow == key ? Color.primary.opacity(0.06) : Color.clear)
@@ -132,26 +150,56 @@ struct VariableGridView: View {
         }
     }
 
+    @ViewBuilder
     private func valueCell(for env: AppEnvironment, key: String) -> some View {
-        let binding = Binding<String>(
-            get: { env.variables[key] ?? "" },
-            set: { env.variables[key] = $0 }
-        )
-        return TextField("value", text: binding)
+        let cellID = CellID(envID: env.id, key: key)
+        let isEditing = editingCell == cellID
+        let value = env.variables[key] ?? ""
+
+        if isEditing {
+            TextField("value", text: Binding(
+                get: { env.variables[key] ?? "" },
+                set: { env.variables[key] = $0 }
+            ), axis: .vertical)
             .textFieldStyle(.plain)
             .font(.system(.body, design: .monospaced))
-            .lineLimit(1)
-            .truncationMode(.tail)
             .padding(.leading, iconLeading)
+            .padding(.vertical, 4)
+            .onSubmit { editingCell = nil }
+        } else {
+            Text(value.isEmpty ? "value" : value)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(value.isEmpty ? .quaternary : .primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.leading, iconLeading)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    clearFocus()
+                    editingCell = cellID
+                }
+        }
     }
 
     private func environmentColumnHeader(for env: AppEnvironment) -> some View {
         HStack(spacing: 0) {
+            // Icon — click to change color
             Image(systemName: "square.stack.3d.up.fill")
                 .foregroundStyle(env.environmentColor.color)
                 .font(.system(size: 11))
                 .frame(width: iconLeading)
+                .onTapGesture {
+                    colorPickerEnvID = env.id
+                }
+                .popover(isPresented: Binding(
+                    get: { colorPickerEnvID == env.id },
+                    set: { if !$0 { colorPickerEnvID = nil } }
+                )) {
+                    colorPickerPopover(for: env)
+                }
 
+            // Name — click to rename inline
             if editingNameID == env.id {
                 TextField("Name", text: Binding(
                     get: { env.name },
@@ -159,22 +207,87 @@ struct VariableGridView: View {
                 ))
                 .textFieldStyle(.plain)
                 .font(.system(.body, weight: .medium))
-                .frame(width: 100)
                 .onSubmit { editingNameID = nil }
             } else {
                 Text(env.name.isEmpty ? "Untitled" : env.name)
                     .font(.system(.body, weight: .medium))
                     .lineLimit(1)
+                    .onTapGesture {
+                        clearFocus()
+                        editingNameID = env.id
+                    }
+            }
+
+            Spacer(minLength: 4)
+
+            // "..." menu — visible on hover, right-aligned
+            if hoveredHeaderID == env.id {
+                Menu {
+                    Button("Rename and Edit...") {
+                        editPopoverEnvID = env.id
+                    }
+                    Button("Duplicate") {
+                        duplicateEnvironment(env)
+                    }
+                    Divider()
+                    Button("Delete", role: .destructive) {
+                        deleteEnvironment(env)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .popover(isPresented: Binding(
+                    get: { editPopoverEnvID == env.id },
+                    set: { if !$0 { editPopoverEnvID = nil } }
+                )) {
+                    NewEnvironmentPopover(
+                        isPresented: Binding(
+                            get: { editPopoverEnvID == env.id },
+                            set: { if !$0 { editPopoverEnvID = nil } }
+                        ),
+                        editing: env
+                    )
+                }
             }
         }
-        .onTapGesture(count: 2) {
-            editingNameID = env.id
+        .onHover { hovering in
+            hoveredHeaderID = hovering ? env.id : nil
         }
         .contextMenu {
             Button("Rename") { editingNameID = env.id }
+            Button("Rename and Edit...") { editPopoverEnvID = env.id }
+            Button("Duplicate") { duplicateEnvironment(env) }
             Divider()
             Button("Delete", role: .destructive) { deleteEnvironment(env) }
         }
+    }
+
+    private func colorPickerPopover(for env: AppEnvironment) -> some View {
+        HStack(spacing: 8) {
+            ForEach(EnvironmentColor.allCases, id: \.self) { color in
+                Circle()
+                    .fill(color.color)
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        if env.environmentColor == color {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .onTapGesture {
+                        env.environmentColor = color
+                        colorPickerEnvID = nil
+                    }
+            }
+        }
+        .padding(12)
     }
 
     private var addEnvironmentButton: some View {
@@ -205,6 +318,16 @@ struct VariableGridView: View {
         for env in environments {
             env.variables.removeValue(forKey: key)
         }
+    }
+
+    private func duplicateEnvironment(_ env: AppEnvironment) {
+        let copy = AppEnvironment(
+            name: "\(env.name) Copy",
+            variables: env.variables,
+            sortOrder: env.sortOrder + 1,
+            color: env.environmentColor
+        )
+        modelContext.insert(copy)
     }
 
     private func deleteEnvironment(_ env: AppEnvironment) {

@@ -6,12 +6,16 @@ struct NewEnvironmentPopover: View {
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
 
     @Binding var isPresented: Bool
+    var editing: AppEnvironment?
+
     @State private var name = "New Environment"
     @State private var selectedColor: EnvironmentColor = .blue
 
+    private var isEditMode: Bool { editing != nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New Environment")
+            Text(isEditMode ? "Edit Environment" : "New Environment")
                 .font(.headline)
 
             TextField("Name", text: $name)
@@ -40,14 +44,29 @@ struct NewEnvironmentPopover: View {
             }
 
             HStack {
+                if isEditMode {
+                    Button("Delete", role: .destructive) {
+                        if let editing {
+                            modelContext.delete(editing)
+                        }
+                        isPresented = false
+                    }
+                    .foregroundStyle(.red)
+                }
+
                 Spacer()
+
                 Button("Cancel") {
                     isPresented = false
                 }
                 .keyboardShortcut(.escape, modifiers: [])
 
-                Button("Create") {
-                    createEnvironment()
+                Button(isEditMode ? "Save" : "Create") {
+                    if isEditMode {
+                        saveEnvironment()
+                    } else {
+                        createEnvironment()
+                    }
                     isPresented = false
                 }
                 .keyboardShortcut(.return, modifiers: [])
@@ -56,6 +75,12 @@ struct NewEnvironmentPopover: View {
         }
         .padding()
         .frame(width: 240)
+        .onAppear {
+            if let editing {
+                name = editing.name
+                selectedColor = editing.environmentColor
+            }
+        }
     }
 
     private func createEnvironment() {
@@ -72,5 +97,11 @@ struct NewEnvironmentPopover: View {
             color: selectedColor
         )
         modelContext.insert(env)
+    }
+
+    private func saveEnvironment() {
+        guard let editing else { return }
+        editing.name = name.trimmingCharacters(in: .whitespaces)
+        editing.environmentColor = selectedColor
     }
 }
