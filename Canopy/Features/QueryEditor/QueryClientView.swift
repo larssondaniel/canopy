@@ -3,6 +3,7 @@ import SwiftUI
 struct QueryClientView: View {
     @Bindable var tab: QueryTab
     var activeEnvironment: AppEnvironment?
+    @SwiftUI.Environment(SchemaStore.self) private var schemaStore
     private let client = GraphQLClient()
 
     var body: some View {
@@ -18,6 +19,27 @@ struct QueryClientView: View {
         tab.currentTask?.cancel()
         tab.currentTask = Task {
             await client.send(tab: tab, environmentVariables: activeEnvironment?.variables)
+
+            // Auto-fetch schema after successful query if not already cached
+            if tab.lastError == nil, tab.responseStatusCode != nil {
+                let endpoint: String
+                if let envVars = activeEnvironment?.variables {
+                    endpoint = TemplateEngine.substitute(in: tab.endpoint, variables: envVars).resolvedText
+                } else {
+                    endpoint = tab.endpoint
+                }
+
+                let normalized = SchemaStore.normalizeEndpoint(endpoint)
+                if !schemaStore.state(for: normalized).isLoaded {
+                    let auth = tab.authConfig.toAuthConfiguration()
+                    schemaStore.fetchSchema(
+                        endpoint: normalized,
+                        method: tab.method,
+                        auth: auth,
+                        headers: tab.headers
+                    )
+                }
+            }
         }
     }
 
