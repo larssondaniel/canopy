@@ -108,16 +108,31 @@ struct VariableGridView: View {
             // Variable rows
             ForEach(allKeys, id: \.self) { key in
                 GridRow {
-                    Text(key)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.blue)
-                        .lineLimit(1)
-                        .frame(width: keyColumnWidth, alignment: .leading)
-                        .contextMenu {
-                            Button("Delete Variable", role: .destructive) {
+                    HStack(spacing: 0) {
+                        Text(key)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.blue)
+                            .lineLimit(1)
+
+                        Spacer(minLength: 4)
+
+                        if hoveredRow == key {
+                            Button {
                                 removeKey(key)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
                             }
+                            .buttonStyle(.plain)
                         }
+                    }
+                    .frame(width: keyColumnWidth, alignment: .leading)
+                    .contextMenu {
+                        Button("Delete Variable", role: .destructive) {
+                            removeKey(key)
+                        }
+                    }
 
                     ForEach(environments) { env in
                         valueCell(for: env, key: key)
