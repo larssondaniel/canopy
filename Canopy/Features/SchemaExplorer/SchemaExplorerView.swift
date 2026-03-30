@@ -1,5 +1,4 @@
 import SwiftUI
-import SwiftData
 
 struct SchemaExplorerView: View {
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
@@ -90,8 +89,8 @@ struct SchemaExplorerView: View {
                     rootOperationSection("Subscriptions", type: subscriptionType, icon: "antenna.radiowaves.left.and.right")
                 }
 
-                // Type groups
-                let typeKinds: [GraphQLTypeKind] = [.object, .interface, .union, .enumType, .inputObject, .scalar]
+                // Type groups (derived from sortOrder, excludes wrapper kinds)
+                let typeKinds = GraphQLTypeKind.topLevelKinds
                 let rootTypeNames: Set<String> = Set(
                     [schema.queryTypeName, schema.mutationTypeName, schema.subscriptionTypeName].compactMap { $0 }
                 )
@@ -109,7 +108,7 @@ struct SchemaExplorerView: View {
                 guard let target else { return }
                 Task { @MainActor in
                     if let type = schema.type(named: target) {
-                        expandedSections.insert(type.kind.displayName)
+                        expandedSections.insert(type.kind.rawValue)
                         expandedTypes.insert(target)
                     }
                     try? await Task.sleep(for: .milliseconds(50))
@@ -159,8 +158,8 @@ struct SchemaExplorerView: View {
     private func typeGroupSection(kind: GraphQLTypeKind, types: [GraphQLFullType]) -> some View {
         if !types.isEmpty {
             DisclosureGroup(isExpanded: Binding(
-                get: { expandedSections.contains(kind.displayName) },
-                set: { if $0 { expandedSections.insert(kind.displayName) } else { expandedSections.remove(kind.displayName) } }
+                get: { expandedSections.contains(kind.rawValue) },
+                set: { if $0 { expandedSections.insert(kind.rawValue) } else { expandedSections.remove(kind.rawValue) } }
             )) {
                 ForEach(types) { type in
                     typeRow(type)

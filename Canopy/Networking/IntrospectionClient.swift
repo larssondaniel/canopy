@@ -255,7 +255,7 @@ struct IntrospectionClient: Sendable {
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch let urlError as URLError {
-            throw IntrospectionError.networkError(Self.friendlyError(for: urlError))
+            throw IntrospectionError.networkError(urlError.friendlyDescription)
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -283,15 +283,13 @@ struct IntrospectionClient: Sendable {
             }
         }
 
-        // Decode off main thread
-        return try await Task.detached(priority: .userInitiated) {
-            do {
-                let decoded = try JSONDecoder().decode(IntrospectionResponse.self, from: data)
-                return GraphQLSchema.from(decoded.data.__schema)
-            } catch {
-                throw IntrospectionError.decodingFailed(error)
-            }
-        }.value
+        // Already off main actor (IntrospectionClient is not @MainActor), decode directly
+        do {
+            let decoded = try JSONDecoder().decode(IntrospectionResponse.self, from: data)
+            return GraphQLSchema.from(decoded.data.__schema)
+        } catch {
+            throw IntrospectionError.decodingFailed(error)
+        }
     }
 
     // MARK: - Request Building
@@ -344,15 +342,4 @@ struct IntrospectionClient: Sendable {
         return request
     }
 
-    private static func friendlyError(for error: URLError) -> String {
-        switch error.code {
-        case .notConnectedToInternet: "No internet connection."
-        case .timedOut: "Introspection request timed out."
-        case .cannotFindHost: "Cannot find host. Check the URL."
-        case .cannotConnectToHost: "Cannot connect to host."
-        case .secureConnectionFailed: "Secure connection failed."
-        case .dnsLookupFailed: "DNS lookup failed. Check the URL."
-        default: "Network error: \(error.localizedDescription)"
-        }
-    }
 }

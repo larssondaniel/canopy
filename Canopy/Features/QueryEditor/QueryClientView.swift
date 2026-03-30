@@ -29,23 +29,14 @@ struct QueryClientView: View {
                     endpoint = tab.endpoint
                 }
 
-                let auth = tab.authConfig.toAuthConfiguration()
                 schemaStore.setActiveEndpoint(
                     endpoint,
                     method: tab.method,
-                    auth: auth,
+                    auth: tab.authConfig.toAuthConfiguration(),
                     headers: tab.headers
                 )
-
-                let normalized = SchemaStore.normalizeEndpoint(endpoint)
-                if !schemaStore.state(for: normalized).isLoaded {
-                    schemaStore.fetchSchema(
-                        endpoint: normalized,
-                        method: tab.method,
-                        auth: auth,
-                        headers: tab.headers
-                    )
-                }
+                // fetchSchema skips if already loaded, normalizes internally
+                schemaStore.fetchSchema(endpoint: endpoint)
             }
         }
     }

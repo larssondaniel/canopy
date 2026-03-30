@@ -99,7 +99,7 @@ struct GraphQLClient {
             return
         } catch let urlError as URLError {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
-            tab.lastError = friendlyError(for: urlError)
+            tab.lastError = urlError.friendlyDescription
         } catch {
             tab.responseTime = CFAbsoluteTimeGetCurrent() - start
             tab.lastError = error.localizedDescription
@@ -163,22 +163,20 @@ struct GraphQLClient {
         return string
     }
 
-    private func friendlyError(for error: URLError) -> String {
-        switch error.code {
-        case .notConnectedToInternet:
-            return "No internet connection."
-        case .timedOut:
-            return "Request timed out."
-        case .cannotFindHost:
-            return "Cannot find host. Check the URL."
-        case .cannotConnectToHost:
-            return "Cannot connect to host."
-        case .secureConnectionFailed:
-            return "Secure connection failed."
-        case .dnsLookupFailed:
-            return "DNS lookup failed. Check the URL."
-        default:
-            return "Network error: \(error.localizedDescription)"
+}
+
+// MARK: - Shared URLError Helper
+
+extension URLError {
+    var friendlyDescription: String {
+        switch code {
+        case .notConnectedToInternet: "No internet connection."
+        case .timedOut: "Request timed out."
+        case .cannotFindHost: "Cannot find host. Check the URL."
+        case .cannotConnectToHost: "Cannot connect to host."
+        case .secureConnectionFailed: "Secure connection failed."
+        case .dnsLookupFailed: "DNS lookup failed. Check the URL."
+        default: "Network error: \(localizedDescription)"
         }
     }
 }

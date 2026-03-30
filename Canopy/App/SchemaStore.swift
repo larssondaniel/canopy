@@ -10,14 +10,9 @@ final class SchemaStore {
         case loading
         case loaded(GraphQLSchema)
         case error(String)
-
-        var isLoaded: Bool {
-            if case .loaded = self { return true }
-            return false
-        }
     }
 
-    private(set) var schemasByEndpoint: [String: LoadState] = [:]
+    private var schemasByEndpoint: [String: LoadState] = [:]
     /// The endpoint the sidebar should display. Set explicitly on tab switch,
     /// query success, or manual refresh — NOT computed from the live text field.
     private(set) var activeEndpoint: String?
@@ -39,11 +34,10 @@ final class SchemaStore {
         auth: AuthConfiguration = .none,
         headers: [CodableHeader] = []
     ) {
-        if let endpoint {
-            activeEndpoint = Self.normalizeEndpoint(endpoint)
-        } else {
-            activeEndpoint = nil
-        }
+        let normalized = endpoint.map(Self.normalizeEndpoint)
+        // Skip no-op updates to avoid unnecessary SwiftUI invalidation
+        guard normalized != activeEndpoint else { return }
+        activeEndpoint = normalized
         activeMethod = method
         activeAuth = auth
         activeHeaders = headers

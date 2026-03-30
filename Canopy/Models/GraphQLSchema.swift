@@ -123,6 +123,11 @@ enum GraphQLTypeKind: String, Codable, Sendable, Hashable, CaseIterable {
         case .list, .nonNull: 6
         }
     }
+
+    /// Top-level schema kinds (excludes wrapper kinds like LIST and NON_NULL).
+    static let topLevelKinds: [GraphQLTypeKind] = allCases
+        .filter { $0.sortOrder < 6 }
+        .sorted { $0.sortOrder < $1.sortOrder }
 }
 
 struct GraphQLField: Codable, Sendable, Identifiable {
@@ -161,6 +166,13 @@ final class IntrospectionTypeRef: Codable, Sendable, Hashable {
     let name: String?
     let ofType: IntrospectionTypeRef?
 
+    /// Cached conversion result. Safe because inputs are immutable and result is deterministic.
+    nonisolated(unsafe) private var _cachedTypeRef: GraphQLTypeRef?
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, name, ofType
+    }
+
     init(kind: GraphQLTypeKind, name: String? = nil, ofType: IntrospectionTypeRef? = nil) {
         self.kind = kind
         self.name = name
@@ -178,7 +190,15 @@ final class IntrospectionTypeRef: Codable, Sendable, Hashable {
     }
 
     /// Convert to the clean recursive enum, with a depth limit for safety.
+    /// Result is cached after first call since inputs are immutable.
     func toTypeRef(maxDepth: Int = 10) -> GraphQLTypeRef {
+        if let cached = _cachedTypeRef { return cached }
+        let result = computeTypeRef(maxDepth: maxDepth)
+        _cachedTypeRef = result
+        return result
+    }
+
+    private func computeTypeRef(maxDepth: Int) -> GraphQLTypeRef {
         guard maxDepth > 0 else { return .named("Unknown") }
         switch kind {
         case .nonNull:
