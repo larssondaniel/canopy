@@ -3,6 +3,7 @@ import SwiftData
 
 struct ContentView: View {
     @SwiftUI.Environment(AppState.self) private var appState
+    @SwiftUI.Environment(SchemaStore.self) private var schemaStore
     @SwiftUI.Environment(\.modelContext) private var modelContext
     @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
@@ -49,6 +50,12 @@ struct ContentView: View {
             appState.modelContext = modelContext
             appState.initializeTabs(from: tabs)
         }
+        .onChange(of: appState.selectedTab) { _, newTab in
+            updateActiveEndpoint(for: newTab)
+        }
+        .onChange(of: activeStates.first?.activeEnvironmentID) { _, _ in
+            updateActiveEndpoint(for: appState.selectedTab)
+        }
     }
 
     @ViewBuilder
@@ -65,6 +72,33 @@ struct ContentView: View {
         case nil:
             welcomeView
         }
+    }
+
+    private func updateActiveEndpoint(for tab: ContentTab?) {
+        guard let queryID = tab?.queryID,
+              let queryTab = tabs.first(where: { $0.id == queryID }) else {
+            schemaStore.setActiveEndpoint(nil)
+            return
+        }
+        let endpoint = queryTab.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            schemaStore.setActiveEndpoint(nil)
+            return
+        }
+
+        let resolved: String
+        if let envVars = activeEnvironment?.variables {
+            resolved = TemplateEngine.substitute(in: endpoint, variables: envVars).resolvedText
+        } else {
+            resolved = endpoint
+        }
+
+        schemaStore.setActiveEndpoint(
+            resolved,
+            method: queryTab.method,
+            auth: queryTab.authConfig.toAuthConfiguration(),
+            headers: queryTab.headers
+        )
     }
 
     @ViewBuilder
