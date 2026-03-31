@@ -101,9 +101,15 @@ struct QueryExplorerView: View {
             tab.query = newQuery
         }
 
+        // Read @Observable properties ONCE at this level.
+        // Child views receive only value types — no @Observable access during their body.
+        let selectedPaths = astService.selectedPaths
+        let hasParseError = astService.parseError != nil
+        let multipleOps = (astService.currentDocument?.definitions.count ?? 0) > 1
+        let isDisabled = activeTab == nil
+
         List {
-            // Parse error indicator
-            if astService.parseError != nil {
+            if hasParseError {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.yellow)
@@ -113,8 +119,7 @@ struct QueryExplorerView: View {
                 }
             }
 
-            // Multiple operations indicator
-            if let doc = astService.currentDocument, doc.definitions.count > 1 {
+            if multipleOps {
                 HStack(spacing: 4) {
                     Image(systemName: "info.circle")
                         .foregroundStyle(.blue)
@@ -124,7 +129,6 @@ struct QueryExplorerView: View {
                 }
             }
 
-            // Root operation sections
             if let queryTypeName = schema.queryTypeName,
                let queryType = schema.type(named: queryTypeName) {
                 OperationSectionView(
@@ -134,8 +138,8 @@ struct QueryExplorerView: View {
                     schema: schema,
                     parentPath: [],
                     searchText: debouncedSearchText,
-                    astService: astService,
-                    activeTab: activeTab,
+                    selectedPaths: selectedPaths,
+                    isDisabled: isDisabled,
                     expandedPaths: $expandedPaths
                 )
             }
@@ -149,8 +153,8 @@ struct QueryExplorerView: View {
                     schema: schema,
                     parentPath: [],
                     searchText: debouncedSearchText,
-                    astService: astService,
-                    activeTab: activeTab,
+                    selectedPaths: selectedPaths,
+                    isDisabled: isDisabled,
                     expandedPaths: $expandedPaths
                 )
             }
@@ -164,8 +168,8 @@ struct QueryExplorerView: View {
                     schema: schema,
                     parentPath: [],
                     searchText: debouncedSearchText,
-                    astService: astService,
-                    activeTab: activeTab,
+                    selectedPaths: selectedPaths,
+                    isDisabled: isDisabled,
                     expandedPaths: $expandedPaths
                 )
             }
@@ -194,8 +198,8 @@ private struct OperationSectionView: View {
     let schema: GraphQLSchema
     let parentPath: [String]
     let searchText: String
-    let astService: QueryASTService
-    let activeTab: QueryTab?
+    let selectedPaths: Set<String>
+    let isDisabled: Bool
     @Binding var expandedPaths: Set<String>
 
     var body: some View {
@@ -209,8 +213,8 @@ private struct OperationSectionView: View {
                     fields: fields,
                     schema: schema,
                     parentPath: parentPath,
-                    astService: astService,
-                    activeTab: activeTab,
+                    selectedPaths: selectedPaths,
+                    isDisabled: isDisabled,
                     searchText: searchText,
                     expandedPaths: $expandedPaths
                 )
@@ -241,8 +245,8 @@ private struct FieldListView: View {
     let fields: [GraphQLField]
     let schema: GraphQLSchema
     let parentPath: [String]
-    let astService: QueryASTService
-    let activeTab: QueryTab?
+    let selectedPaths: Set<String>
+    let isDisabled: Bool
     let searchText: String
     @Binding var expandedPaths: Set<String>
     var ancestorTypes: Set<String> = []
@@ -251,13 +255,41 @@ private struct FieldListView: View {
     var body: some View {
         let displayedFields = Array(fields.prefix(fieldCountCap))
         ForEach(displayedFields, id: \.name) { field in
+            // Pre-compute all derived values here so ExplorerFieldView
+            // receives only value types and can be body-skipped by SwiftUI.
+            let typeRef = field.type.toTypeRef()
+            let namedType = typeRef.namedType
+            let returnType = schema.type(named: namedType)
+            let isObject: Bool = {
+                guard let rt = returnType else { return false }
+                switch rt.kind {
+                case .object, .interface: return (rt.fields?.isEmpty == false)
+                case .union: return true
+                default: return false
+                }
+            }()
+            let isCircular = ancestorTypes.contains(namedType)
+            let pathKey = (parentPath + [field.name]).joined(separator: "/")
+            let isSelected = selectedPaths.contains(pathKey)
+
             ExplorerFieldView(
-                field: field,
-                schema: schema,
+                fieldName: field.name,
+                typeName: typeRef.displayString,
+                returnTypeName: namedType,
+                isSelected: isSelected,
+                isDeprecated: field.isDeprecated,
+                isObjectType: isObject,
+                isCircular: isCircular,
+                hasArguments: !field.args.isEmpty,
+                isDisabled: isDisabled,
                 parentPath: parentPath,
-                astService: astService,
-                activeTab: activeTab,
+                fieldPath: parentPath + [field.name],
+                pathKey: pathKey,
+                args: field.args,
+                subFields: isObject && !isCircular ? returnType?.fields : nil,
+                schema: schema,
                 searchText: searchText,
+                selectedPaths: selectedPaths,
                 expandedPaths: $expandedPaths,
                 ancestorTypes: ancestorTypes
             )
@@ -273,55 +305,41 @@ private struct FieldListView: View {
 // MARK: - Explorer Field View
 
 private struct ExplorerFieldView: View {
-    let field: GraphQLField
-    let schema: GraphQLSchema
+    // Pre-computed values (all value types)
+    let fieldName: String
+    let typeName: String
+    let returnTypeName: String
+    let isSelected: Bool
+    let isDeprecated: Bool
+    let isObjectType: Bool
+    let isCircular: Bool
+    let hasArguments: Bool
+    let isDisabled: Bool
     let parentPath: [String]
-    let astService: QueryASTService
-    let activeTab: QueryTab?
+    let fieldPath: [String]
+    let pathKey: String
+    let args: [GraphQLInputValue]
+    let subFields: [GraphQLField]?
+
+    // Needed for recursive child rendering
+    let schema: GraphQLSchema
     let searchText: String
+    let selectedPaths: Set<String>
     @Binding var expandedPaths: Set<String>
     var ancestorTypes: Set<String> = []
-
-    private var fieldPath: [String] { parentPath + [field.name] }
-    private var pathKey: String { fieldPath.joined(separator: "/") }
-
-    private var returnTypeName: String {
-        field.type.toTypeRef().namedType
-    }
-
-    private var returnType: GraphQLFullType? {
-        schema.type(named: returnTypeName)
-    }
-
-    private var isObjectType: Bool {
-        guard let rt = returnType else { return false }
-        switch rt.kind {
-        case .object, .interface: return (rt.fields?.isEmpty == false)
-        case .union: return true
-        default: return false
-        }
-    }
-
-    private var isCircular: Bool {
-        ancestorTypes.contains(returnTypeName)
-    }
-
-    private var isSelected: Bool {
-        astService.isFieldSelected(fieldName: field.name, parentPath: parentPath)
-    }
 
     var body: some View {
         if isObjectType && !isCircular {
             expandableField
         } else {
             QueryFieldRowView(
-                fieldName: field.name,
-                typeName: field.type.toTypeRef().displayString,
+                fieldName: fieldName,
+                typeName: typeName,
                 isSelected: isSelected,
-                isDeprecated: field.isDeprecated,
+                isDeprecated: isDeprecated,
                 isCircular: isCircular,
-                hasArguments: !field.args.isEmpty,
-                isDisabled: activeTab == nil,
+                hasArguments: hasArguments,
+                isDisabled: isDisabled,
                 parentPath: parentPath
             )
         }
@@ -331,7 +349,7 @@ private struct ExplorerFieldView: View {
     private var expandableField: some View {
         DisclosureGroup(isExpanded: expandedBinding(for: pathKey)) {
             // Arguments as read-only labels
-            ForEach(field.args, id: \.name) { arg in
+            ForEach(args, id: \.name) { arg in
                 HStack(spacing: 2) {
                     Text(arg.name)
                         .foregroundStyle(.orange)
@@ -345,7 +363,7 @@ private struct ExplorerFieldView: View {
             }
 
             // Sub-fields
-            if let subFields = returnType?.fields {
+            if let subFields {
                 let filtered = filterFields(subFields)
                 var newAncestors = ancestorTypes
                 let _ = newAncestors.insert(returnTypeName)
@@ -353,8 +371,8 @@ private struct ExplorerFieldView: View {
                     fields: filtered,
                     schema: schema,
                     parentPath: fieldPath,
-                    astService: astService,
-                    activeTab: activeTab,
+                    selectedPaths: selectedPaths,
+                    isDisabled: isDisabled,
                     searchText: searchText,
                     expandedPaths: $expandedPaths,
                     ancestorTypes: newAncestors
@@ -362,13 +380,13 @@ private struct ExplorerFieldView: View {
             }
         } label: {
             QueryFieldRowView(
-                fieldName: field.name,
-                typeName: field.type.toTypeRef().displayString,
+                fieldName: fieldName,
+                typeName: typeName,
                 isSelected: isSelected,
-                isDeprecated: field.isDeprecated,
+                isDeprecated: isDeprecated,
                 isCircular: false,
-                hasArguments: !field.args.isEmpty,
-                isDisabled: activeTab == nil,
+                hasArguments: hasArguments,
+                isDisabled: isDisabled,
                 parentPath: parentPath
             )
         }

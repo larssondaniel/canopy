@@ -314,6 +314,61 @@ struct QueryASTServiceTests {
         #expect(service.isFieldSelected(fieldName: "version", parentPath: []))
     }
 
+    // MARK: - selectedPaths Tests
+
+    @Test("selectedPaths populated after parse")
+    func selectedPathsPopulated() {
+        let service = QueryASTService()
+        service.parse("{ user { id name } }")
+
+        #expect(service.selectedPaths.contains("user"))
+        #expect(service.selectedPaths.contains("user/id"))
+        #expect(service.selectedPaths.contains("user/name"))
+        #expect(!service.selectedPaths.contains("user/email"))
+    }
+
+    @Test("selectedPaths cleared on empty query")
+    func selectedPathsCleared() {
+        let service = QueryASTService()
+        service.parse("{ user { id } }")
+        #expect(!service.selectedPaths.isEmpty)
+
+        service.parse("")
+        #expect(service.selectedPaths.isEmpty)
+    }
+
+    @Test("selectedPaths updated after toggleField")
+    func selectedPathsAfterToggle() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+        service.parse("{ user { id } }")
+
+        _ = service.toggleField(fieldName: "name", parentPath: ["user"], schema: schema, currentQuery: "{ user { id } }")
+
+        #expect(service.selectedPaths.contains("user/name"))
+        #expect(service.selectedPaths.contains("user/id"))
+        #expect(service.selectedPaths.contains("user"))
+    }
+
+    @Test("selectedPaths consistent with isFieldSelected")
+    func selectedPathsConsistentWithIsFieldSelected() {
+        let service = QueryASTService()
+        service.parse("{ user { id name } posts { id title } }")
+
+        // Verify selectedPaths and isFieldSelected agree
+        #expect(service.isFieldSelected(fieldName: "user", parentPath: []))
+        #expect(service.selectedPaths.contains("user"))
+
+        #expect(service.isFieldSelected(fieldName: "id", parentPath: ["user"]))
+        #expect(service.selectedPaths.contains("user/id"))
+
+        #expect(service.isFieldSelected(fieldName: "posts", parentPath: []))
+        #expect(service.selectedPaths.contains("posts"))
+
+        #expect(!service.isFieldSelected(fieldName: "email", parentPath: ["user"]))
+        #expect(!service.selectedPaths.contains("user/email"))
+    }
+
     @Test("Multiple toggle operations maintain consistency")
     func multipleToggles() {
         let service = QueryASTService()

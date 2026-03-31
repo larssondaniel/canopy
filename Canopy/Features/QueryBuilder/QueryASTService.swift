@@ -22,6 +22,11 @@ final class QueryASTService {
     /// Secondary guard: content comparison to catch formatting differences.
     private var lastPrintedQuery: String?
 
+    /// Cached set of selected field paths (e.g. "user", "user/id", "user/name").
+    /// Rebuilt once per AST change. Views read this for O(1) selection checks
+    /// instead of traversing the AST per-field per-render.
+    private(set) var selectedPaths: Set<String> = []
+
     // MARK: - Parse
 
     /// Parse query text into a Document AST.
@@ -43,6 +48,7 @@ final class QueryASTService {
             currentDocument = nil
             parseError = nil
             lastPrintedQuery = nil
+            rebuildSelectedPaths()
             return
         }
 
@@ -50,6 +56,7 @@ final class QueryASTService {
             let document = try GraphQL.parse(source: queryText)
             currentDocument = document
             parseError = nil
+            rebuildSelectedPaths()
         } catch {
             // Keep last valid AST, set error
             parseError = error.localizedDescription
@@ -59,15 +66,34 @@ final class QueryASTService {
     // MARK: - Field Selection State
 
     /// Check if a field exists at the given path in the current AST.
-    /// Path example: ["user", "name"] checks if `user { name }` exists.
+    /// Uses the pre-computed `selectedPaths` set for O(1) lookup.
     func isFieldSelected(fieldName: String, parentPath: [String]) -> Bool {
-        guard let document = currentDocument else { return false }
-        guard let selectionSet = selectionSetAtPath(parentPath, in: document) else {
-            return false
+        let path = (parentPath + [fieldName]).joined(separator: "/")
+        return selectedPaths.contains(path)
+    }
+
+    // MARK: - Selected Paths Cache
+
+    /// Walk the AST once to build the set of all selected field paths.
+    private func rebuildSelectedPaths() {
+        guard let document = currentDocument,
+              let op = document.definitions.first as? OperationDefinition else {
+            selectedPaths = []
+            return
         }
-        return selectionSet.selections.contains { sel in
-            guard let field = sel as? GraphQL.Field else { return false }
-            return field.name.value == fieldName
+        var paths = Set<String>()
+        collectPaths(from: op.selectionSet, prefix: "", into: &paths)
+        selectedPaths = paths
+    }
+
+    private func collectPaths(from selectionSet: SelectionSet, prefix: String, into paths: inout Set<String>) {
+        for selection in selectionSet.selections {
+            guard let field = selection as? GraphQL.Field else { continue }
+            let path = prefix.isEmpty ? field.name.value : "\(prefix)/\(field.name.value)"
+            paths.insert(path)
+            if let nested = field.selectionSet {
+                collectPaths(from: nested, prefix: path, into: &paths)
+            }
         }
     }
 
@@ -142,6 +168,7 @@ final class QueryASTService {
             do {
                 currentDocument = try GraphQL.parse(source: result)
                 parseError = nil
+                rebuildSelectedPaths()
             } catch {}
             suppressReparse = true
             lastPrintedQuery = result
@@ -156,6 +183,7 @@ final class QueryASTService {
         let result = GraphQL.print(ast: newDocument)
         currentDocument = newDocument
         parseError = nil
+        rebuildSelectedPaths()
         suppressReparse = true
         lastPrintedQuery = result
         return result
@@ -177,6 +205,7 @@ final class QueryASTService {
         let result = GraphQL.print(ast: newDocument)
         currentDocument = newDocument
         parseError = nil
+        rebuildSelectedPaths()
         suppressReparse = true
         lastPrintedQuery = result
         return result
