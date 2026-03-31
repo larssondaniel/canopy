@@ -385,13 +385,19 @@ private struct ExplorerFieldView: View {
     @ViewBuilder
     private var expandableField: some View {
         DisclosureGroup(isExpanded: expandedBinding(for: pathKey)) {
-            // Arguments — editable when field is selected, read-only otherwise
+            // Arguments with checkboxes — editable when parent field is selected
             ForEach(args, id: \.name) { arg in
+                let typeRef = arg.type.toTypeRef()
+                let hasValue = currentArgValues[arg.name] != nil
+                let isRequired: Bool = if case .nonNull = typeRef { true } else { false }
                 ArgumentRowView(
                     argName: arg.name,
-                    argTypeName: arg.type.toTypeRef().displayString,
+                    argTypeName: typeRef.displayString,
                     currentValue: currentArgValues[arg.name] ?? "",
-                    isEditable: isSelected && !isDisabled,
+                    isChecked: hasValue,
+                    isRequired: isRequired,
+                    isFieldSelected: isSelected,
+                    isDisabled: isDisabled,
                     fieldName: fieldName,
                     parentPath: parentPath
                 )
@@ -448,16 +454,42 @@ private struct ArgumentRowView: View {
     let argName: String
     let argTypeName: String
     let currentValue: String
-    let isEditable: Bool
+    let isChecked: Bool
+    let isRequired: Bool
+    let isFieldSelected: Bool
+    let isDisabled: Bool
     let fieldName: String
     let parentPath: [String]
 
     @State private var editText: String = ""
+    @State private var localChecked: Bool = false
     @FocusState private var isFocused: Bool
     @SwiftUI.Environment(\.setArgumentAction) private var setArgAction
 
+    private var canInteract: Bool { isFieldSelected && !isDisabled }
+    private var showInput: Bool { (isChecked || localChecked) && canInteract }
+
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
+            Toggle(isOn: Binding(
+                get: { isChecked || localChecked },
+                set: { newValue in
+                    if newValue {
+                        localChecked = true
+                    } else {
+                        localChecked = false
+                        editText = ""
+                        // Remove the argument from the query
+                        setArgAction?.setArgument(fieldName, parentPath, argName, "")
+                    }
+                }
+            )) {
+                EmptyView()
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            .disabled(!canInteract)
+
             Text(argName)
                 .foregroundStyle(.orange)
             Text(":")
@@ -465,7 +497,7 @@ private struct ArgumentRowView: View {
             Text(argTypeName)
                 .foregroundStyle(.secondary)
 
-            if isEditable {
+            if showInput {
                 Spacer()
                 TextField("value", text: $editText)
                     .textFieldStyle(.plain)
@@ -486,6 +518,10 @@ private struct ArgumentRowView: View {
         .task(id: currentValue) {
             if !isFocused {
                 editText = currentValue
+            }
+            // Sync local checked state with external state
+            if isChecked {
+                localChecked = false // external state takes over
             }
         }
         .onAppear {
