@@ -27,6 +27,11 @@ final class QueryASTService {
     /// instead of traversing the AST per-field per-render.
     private(set) var selectedPaths: Set<String> = []
 
+    /// Cached argument values extracted from the AST.
+    /// Key: field path (e.g. "user"), Value: [argName: displayValue].
+    /// Rebuilt alongside selectedPaths on every AST change.
+    private(set) var argumentValues: [String: [String: String]] = [:]
+
     // MARK: - Parse
 
     /// Parse query text into a Document AST.
@@ -74,26 +79,61 @@ final class QueryASTService {
 
     // MARK: - Selected Paths Cache
 
-    /// Walk the AST once to build the set of all selected field paths.
+    /// Walk the AST once to build the set of all selected field paths and argument values.
     private func rebuildSelectedPaths() {
         guard let document = currentDocument,
               let op = document.definitions.first as? OperationDefinition else {
             selectedPaths = []
+            argumentValues = [:]
             return
         }
         var paths = Set<String>()
-        collectPaths(from: op.selectionSet, prefix: "", into: &paths)
+        var argVals: [String: [String: String]] = [:]
+        collectPaths(from: op.selectionSet, prefix: "", into: &paths, argValues: &argVals)
         selectedPaths = paths
+        argumentValues = argVals
     }
 
-    private func collectPaths(from selectionSet: SelectionSet, prefix: String, into paths: inout Set<String>) {
+    private func collectPaths(
+        from selectionSet: SelectionSet,
+        prefix: String,
+        into paths: inout Set<String>,
+        argValues: inout [String: [String: String]]
+    ) {
         for selection in selectionSet.selections {
             guard let field = selection as? GraphQL.Field else { continue }
             let path = prefix.isEmpty ? field.name.value : "\(prefix)/\(field.name.value)"
             paths.insert(path)
-            if let nested = field.selectionSet {
-                collectPaths(from: nested, prefix: path, into: &paths)
+
+            // Extract argument values
+            if !field.arguments.isEmpty {
+                var args: [String: String] = [:]
+                for arg in field.arguments {
+                    args[arg.name.value] = extractValueString(from: arg.value)
+                }
+                argValues[path] = args
             }
+
+            if let nested = field.selectionSet {
+                collectPaths(from: nested, prefix: path, into: &paths, argValues: &argValues)
+            }
+        }
+    }
+
+    /// Extract a display string from a GraphQL AST Value node.
+    private func extractValueString(from value: Value) -> String {
+        if let sv = value as? StringValue {
+            return sv.value
+        } else if let iv = value as? IntValue {
+            return iv.value
+        } else if let fv = value as? FloatValue {
+            return fv.value
+        } else if let bv = value as? BooleanValue {
+            return bv.value ? "true" : "false"
+        } else if let ev = value as? EnumValue {
+            return ev.value
+        } else {
+            return GraphQL.print(ast: value)
         }
     }
 
@@ -365,6 +405,194 @@ final class QueryASTService {
             current = nested
         }
         return current
+    }
+
+    // MARK: - Set Arguments
+
+    /// Format a user-entered value as a GraphQL literal based on the schema type.
+    /// Returns nil for empty input (meaning: omit this argument).
+    func formatArgumentLiteral(value: String, typeName: String, schema: GraphQLSchema) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Check if it's an enum type
+        if let type = schema.type(named: typeName), type.kind == .enumType {
+            return trimmed // Bare identifier
+        }
+
+        switch typeName {
+        case "String", "ID":
+            // Escape any embedded quotes and wrap
+            let escaped = trimmed.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            return "\"\(escaped)\""
+        case "Int":
+            return trimmed // Bare integer
+        case "Float":
+            return trimmed // Bare float
+        case "Boolean":
+            return trimmed.lowercased() // true/false
+        default:
+            // Unknown scalar — try bare (works for custom scalars)
+            return "\"\(trimmed)\""
+        }
+    }
+
+    /// Set argument values on a field in the AST. Returns the new query text.
+    /// Empty values are omitted (argument removed from query).
+    func setArguments(
+        fieldName: String,
+        parentPath: [String],
+        arguments: [String: String],
+        schema: GraphQLSchema,
+        currentQuery: String
+    ) -> String {
+        guard let document = currentDocument else { return currentQuery }
+
+        // Resolve schema info for the field to get argument types
+        let schemaArgs = resolveFieldArgs(fieldName: fieldName, parentPath: parentPath, schema: schema)
+
+        // Build the argument string for the snippet
+        var argParts: [String] = []
+        for (argName, rawValue) in arguments {
+            let argTypeName = schemaArgs[argName] ?? "String"
+            if let formatted = formatArgumentLiteral(value: rawValue, typeName: argTypeName, schema: schema) {
+                argParts.append("\(argName): \(formatted)")
+            }
+        }
+
+        // Build a snippet to parse and extract arguments from
+        let argString = argParts.isEmpty ? "" : "(\(argParts.joined(separator: ", ")))"
+
+        // Need a valid snippet — check if field returns an object type
+        let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema)
+        let needsSubSelection = fieldType.map { hasSubFields($0, schema: schema) } ?? false
+        let snippet: String
+        if needsSubSelection {
+            snippet = "{ \(fieldName)\(argString) { __typename } }"
+        } else {
+            snippet = "{ \(fieldName)\(argString) }"
+        }
+
+        // Parse snippet to extract arguments
+        guard let snippetDoc = try? GraphQL.parse(source: snippet),
+              let snippetOp = snippetDoc.definitions.first as? OperationDefinition,
+              let snippetField = snippetOp.selectionSet.selections.first as? GraphQL.Field else {
+            return currentQuery
+        }
+
+        let newArguments = snippetField.arguments
+
+        // Modify the target field in the document
+        guard let op = document.definitions.first as? OperationDefinition else {
+            return currentQuery
+        }
+
+        let newSelectionSet = modifyFieldInSelectionSet(
+            op.selectionSet,
+            fieldName: fieldName,
+            at: parentPath,
+            transform: { field in
+                field.set(value: .array(newArguments), key: "arguments")
+            }
+        )
+        guard let newSelectionSet else { return currentQuery }
+
+        let newOp = op.set(value: .node(newSelectionSet), key: "selectionSet")
+        var definitions: [Definition] = [newOp]
+        if document.definitions.count > 1 {
+            definitions.append(contentsOf: document.definitions.dropFirst())
+        }
+        let newDocument = document.set(value: .array(definitions), key: "definitions")
+
+        let result = GraphQL.print(ast: newDocument)
+        currentDocument = newDocument
+        parseError = nil
+        rebuildSelectedPaths()
+        suppressReparse = true
+        lastPrintedQuery = result
+        return result
+    }
+
+    /// Modify a specific field by name at the given parent path.
+    /// The transform closure receives the Field and returns a modified Field.
+    private func modifyFieldInSelectionSet(
+        _ selectionSet: SelectionSet,
+        fieldName: String,
+        at parentPath: [String],
+        transform: (GraphQL.Field) -> GraphQL.Field
+    ) -> SelectionSet? {
+        if parentPath.isEmpty {
+            // We're at the right level — find and transform the field
+            var newSelections: [Selection] = []
+            var found = false
+            for selection in selectionSet.selections {
+                guard let field = selection as? GraphQL.Field,
+                      field.name.value == fieldName else {
+                    newSelections.append(selection)
+                    continue
+                }
+                found = true
+                newSelections.append(transform(field))
+            }
+            guard found else { return nil }
+            return selectionSet.set(value: .array(newSelections), key: "selections")
+        }
+
+        // Navigate deeper
+        let targetFieldName = parentPath[0]
+        let remainingPath = Array(parentPath.dropFirst())
+
+        var newSelections: [Selection] = []
+        var found = false
+        for selection in selectionSet.selections {
+            guard let field = selection as? GraphQL.Field,
+                  field.name.value == targetFieldName,
+                  let childSS = field.selectionSet else {
+                newSelections.append(selection)
+                continue
+            }
+            found = true
+            guard let modifiedChildSS = modifyFieldInSelectionSet(
+                childSS, fieldName: fieldName, at: remainingPath, transform: transform
+            ) else {
+                return nil
+            }
+            let modifiedField = field.set(value: .node(modifiedChildSS), key: "selectionSet")
+            newSelections.append(modifiedField)
+        }
+
+        guard found else { return nil }
+        return selectionSet.set(value: .array(newSelections), key: "selections")
+    }
+
+    /// Resolve the argument type names for a field from the schema.
+    private func resolveFieldArgs(
+        fieldName: String,
+        parentPath: [String],
+        schema: GraphQLSchema
+    ) -> [String: String] {
+        var currentTypeName = schema.queryTypeName
+        for pathField in parentPath {
+            guard let typeName = currentTypeName,
+                  let type = schema.type(named: typeName),
+                  let field = type.fields?.first(where: { $0.name == pathField }) else {
+                return [:]
+            }
+            currentTypeName = field.type.toTypeRef().namedType
+        }
+
+        guard let typeName = currentTypeName,
+              let parentType = schema.type(named: typeName),
+              let field = parentType.fields?.first(where: { $0.name == fieldName }) else {
+            return [:]
+        }
+
+        var result: [String: String] = [:]
+        for arg in field.args {
+            result[arg.name] = arg.type.toTypeRef().namedType
+        }
+        return result
     }
 
     // MARK: - Schema Helpers

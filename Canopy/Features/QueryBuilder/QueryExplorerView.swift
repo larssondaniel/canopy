@@ -6,8 +6,14 @@ struct ToggleFieldAction {
     let toggle: @MainActor (_ fieldName: String, _ parentPath: [String]) -> Void
 }
 
+/// Environment key for the set argument action.
+struct SetArgumentAction {
+    let setArgument: @MainActor (_ fieldName: String, _ parentPath: [String], _ argName: String, _ value: String) -> Void
+}
+
 extension EnvironmentValues {
     @Entry var toggleFieldAction: ToggleFieldAction? = nil
+    @Entry var setArgumentAction: SetArgumentAction? = nil
 }
 
 /// Visual query builder tree showing Queries, Mutations, Subscriptions with
@@ -101,9 +107,29 @@ struct QueryExplorerView: View {
             tab.query = newQuery
         }
 
+        let setArgAction = SetArgumentAction { fieldName, parentPath, argName, value in
+            guard let tab = activeTab else { return }
+            // Build full argument map: keep existing values, update the changed one
+            var allArgs = astService.argumentValues[(parentPath + [fieldName]).joined(separator: "/")] ?? [:]
+            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                allArgs.removeValue(forKey: argName)
+            } else {
+                allArgs[argName] = value
+            }
+            let newQuery = astService.setArguments(
+                fieldName: fieldName,
+                parentPath: parentPath,
+                arguments: allArgs,
+                schema: schema,
+                currentQuery: tab.query
+            )
+            tab.query = newQuery
+        }
+
         // Read @Observable properties ONCE at this level.
         // Child views receive only value types — no @Observable access during their body.
         let selectedPaths = astService.selectedPaths
+        let argValues = astService.argumentValues
         let hasParseError = astService.parseError != nil
         let multipleOps = (astService.currentDocument?.definitions.count ?? 0) > 1
         let isDisabled = activeTab == nil
@@ -139,6 +165,7 @@ struct QueryExplorerView: View {
                     parentPath: [],
                     searchText: debouncedSearchText,
                     selectedPaths: selectedPaths,
+                    argumentValues: argValues,
                     isDisabled: isDisabled,
                     expandedPaths: $expandedPaths
                 )
@@ -154,6 +181,7 @@ struct QueryExplorerView: View {
                     parentPath: [],
                     searchText: debouncedSearchText,
                     selectedPaths: selectedPaths,
+                    argumentValues: argValues,
                     isDisabled: isDisabled,
                     expandedPaths: $expandedPaths
                 )
@@ -169,6 +197,7 @@ struct QueryExplorerView: View {
                     parentPath: [],
                     searchText: debouncedSearchText,
                     selectedPaths: selectedPaths,
+                    argumentValues: argValues,
                     isDisabled: isDisabled,
                     expandedPaths: $expandedPaths
                 )
@@ -176,6 +205,7 @@ struct QueryExplorerView: View {
         }
         .listStyle(.sidebar)
         .environment(\.toggleFieldAction, toggleAction)
+        .environment(\.setArgumentAction, setArgAction)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -199,6 +229,7 @@ private struct OperationSectionView: View {
     let parentPath: [String]
     let searchText: String
     let selectedPaths: Set<String>
+    let argumentValues: [String: [String: String]]
     let isDisabled: Bool
     @Binding var expandedPaths: Set<String>
 
@@ -214,6 +245,7 @@ private struct OperationSectionView: View {
                     schema: schema,
                     parentPath: parentPath,
                     selectedPaths: selectedPaths,
+                    argumentValues: argumentValues,
                     isDisabled: isDisabled,
                     searchText: searchText,
                     expandedPaths: $expandedPaths
@@ -246,6 +278,7 @@ private struct FieldListView: View {
     let schema: GraphQLSchema
     let parentPath: [String]
     let selectedPaths: Set<String>
+    let argumentValues: [String: [String: String]]
     let isDisabled: Bool
     let searchText: String
     @Binding var expandedPaths: Set<String>
@@ -286,10 +319,12 @@ private struct FieldListView: View {
                 fieldPath: parentPath + [field.name],
                 pathKey: pathKey,
                 args: field.args,
+                currentArgValues: argumentValues[pathKey] ?? [:],
                 subFields: isObject && !isCircular ? returnType?.fields : nil,
                 schema: schema,
                 searchText: searchText,
                 selectedPaths: selectedPaths,
+                argumentValues: argumentValues,
                 expandedPaths: $expandedPaths,
                 ancestorTypes: ancestorTypes
             )
@@ -319,12 +354,14 @@ private struct ExplorerFieldView: View {
     let fieldPath: [String]
     let pathKey: String
     let args: [GraphQLInputValue]
+    let currentArgValues: [String: String]
     let subFields: [GraphQLField]?
 
     // Needed for recursive child rendering
     let schema: GraphQLSchema
     let searchText: String
     let selectedPaths: Set<String>
+    let argumentValues: [String: [String: String]]
     @Binding var expandedPaths: Set<String>
     var ancestorTypes: Set<String> = []
 
@@ -348,18 +385,16 @@ private struct ExplorerFieldView: View {
     @ViewBuilder
     private var expandableField: some View {
         DisclosureGroup(isExpanded: expandedBinding(for: pathKey)) {
-            // Arguments as read-only labels
+            // Arguments — editable when field is selected, read-only otherwise
             ForEach(args, id: \.name) { arg in
-                HStack(spacing: 2) {
-                    Text(arg.name)
-                        .foregroundStyle(.orange)
-                    Text(":")
-                        .foregroundStyle(.secondary)
-                    Text(arg.type.toTypeRef().displayString)
-                        .foregroundStyle(.secondary)
-                }
-                .font(.system(.caption2, design: .monospaced))
-                .padding(.leading, 8)
+                ArgumentRowView(
+                    argName: arg.name,
+                    argTypeName: arg.type.toTypeRef().displayString,
+                    currentValue: currentArgValues[arg.name] ?? "",
+                    isEditable: isSelected && !isDisabled,
+                    fieldName: fieldName,
+                    parentPath: parentPath
+                )
             }
 
             // Sub-fields
@@ -372,6 +407,7 @@ private struct ExplorerFieldView: View {
                     schema: schema,
                     parentPath: fieldPath,
                     selectedPaths: selectedPaths,
+                    argumentValues: argumentValues,
                     isDisabled: isDisabled,
                     searchText: searchText,
                     expandedPaths: $expandedPaths,
@@ -403,5 +439,64 @@ private struct ExplorerFieldView: View {
         guard !searchText.isEmpty else { return fields }
         let query = searchText.lowercased()
         return fields.filter { $0.name.lowercased().contains(query) }
+    }
+}
+
+// MARK: - Argument Row View
+
+private struct ArgumentRowView: View {
+    let argName: String
+    let argTypeName: String
+    let currentValue: String
+    let isEditable: Bool
+    let fieldName: String
+    let parentPath: [String]
+
+    @State private var editText: String = ""
+    @FocusState private var isFocused: Bool
+    @SwiftUI.Environment(\.setArgumentAction) private var setArgAction
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text(argName)
+                .foregroundStyle(.orange)
+            Text(":")
+                .foregroundStyle(.secondary)
+            Text(argTypeName)
+                .foregroundStyle(.secondary)
+
+            if isEditable {
+                Spacer()
+                TextField("value", text: $editText)
+                    .textFieldStyle(.plain)
+                    .font(.system(.caption2, design: .monospaced))
+                    .frame(maxWidth: 100)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 3))
+                    .focused($isFocused)
+                    .onSubmit { commitValue() }
+                    .onChange(of: isFocused) { _, focused in
+                        if !focused { commitValue() }
+                    }
+            }
+        }
+        .font(.system(.caption2, design: .monospaced))
+        .padding(.leading, 8)
+        .task(id: currentValue) {
+            if !isFocused {
+                editText = currentValue
+            }
+        }
+        .onAppear {
+            editText = currentValue
+        }
+    }
+
+    private func commitValue() {
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed != currentValue {
+            setArgAction?.setArgument(fieldName, parentPath, argName, trimmed)
+        }
     }
 }

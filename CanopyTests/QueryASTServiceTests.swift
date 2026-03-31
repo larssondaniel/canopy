@@ -391,4 +391,108 @@ struct QueryASTServiceTests {
         #expect(!service.isFieldSelected(fieldName: "version", parentPath: []))
         #expect(service.isFieldSelected(fieldName: "user", parentPath: []))
     }
+
+    // MARK: - Argument Editing Tests
+
+    @Test("formatArgumentLiteral quotes String and ID types")
+    func formatStringAndID() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        #expect(service.formatArgumentLiteral(value: "hello", typeName: "String", schema: schema) == "\"hello\"")
+        #expect(service.formatArgumentLiteral(value: "123", typeName: "ID", schema: schema) == "\"123\"")
+    }
+
+    @Test("formatArgumentLiteral returns bare number for Int and Float")
+    func formatIntAndFloat() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        #expect(service.formatArgumentLiteral(value: "42", typeName: "Int", schema: schema) == "42")
+        #expect(service.formatArgumentLiteral(value: "3.14", typeName: "Float", schema: schema) == "3.14")
+    }
+
+    @Test("formatArgumentLiteral returns bare value for Boolean")
+    func formatBoolean() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        #expect(service.formatArgumentLiteral(value: "true", typeName: "Boolean", schema: schema) == "true")
+        #expect(service.formatArgumentLiteral(value: "False", typeName: "Boolean", schema: schema) == "false")
+    }
+
+    @Test("formatArgumentLiteral returns nil for empty value")
+    func formatEmpty() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        #expect(service.formatArgumentLiteral(value: "", typeName: "String", schema: schema) == nil)
+        #expect(service.formatArgumentLiteral(value: "  ", typeName: "Int", schema: schema) == nil)
+    }
+
+    @Test("setArguments adds argument to existing field")
+    func setArgumentsAdds() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+        service.parse("{ user { id } }")
+
+        let result = service.setArguments(
+            fieldName: "user",
+            parentPath: [],
+            arguments: ["id": "123"],
+            schema: schema,
+            currentQuery: "{ user { id } }"
+        )
+
+        #expect(result.contains("user"))
+        #expect(result.contains("123"))
+        #expect(result.contains("id"))
+    }
+
+    @Test("setArguments with empty value removes argument")
+    func setArgumentsRemoves() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+        service.parse("{ user(id: \"123\") { id } }")
+
+        let result = service.setArguments(
+            fieldName: "user",
+            parentPath: [],
+            arguments: [:],
+            schema: schema,
+            currentQuery: "{ user(id: \"123\") { id } }"
+        )
+
+        // Should not contain the argument
+        #expect(!result.contains("123"))
+        #expect(result.contains("user"))
+        #expect(result.contains("id"))
+    }
+
+    @Test("argumentValues cache populated after parsing query with arguments")
+    func argumentValuesCachePopulated() {
+        let service = QueryASTService()
+        service.parse("{ user(id: \"abc\") { name } }")
+
+        #expect(service.argumentValues["user"]?["id"] == "abc")
+    }
+
+    @Test("argumentValues round-trip: set → print → parse → cache matches")
+    func argumentValuesRoundTrip() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+        service.parse("{ user { id } }")
+
+        let result = service.setArguments(
+            fieldName: "user",
+            parentPath: [],
+            arguments: ["id": "xyz"],
+            schema: schema,
+            currentQuery: "{ user { id } }"
+        )
+
+        // Re-parse the result
+        service.parse(result)
+        #expect(service.argumentValues["user"]?["id"] == "xyz")
+    }
 }
