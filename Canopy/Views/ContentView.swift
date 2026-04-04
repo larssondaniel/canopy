@@ -105,6 +105,14 @@ struct ContentView: View {
             auth: queryTab.authConfig.toAuthConfiguration(),
             headers: queryTab.headers
         )
+
+        // Auto-load schema from cache (or fetch if needed) when endpoint becomes active
+        schemaStore.fetchSchema(
+            endpoint: resolved,
+            method: queryTab.method,
+            auth: queryTab.authConfig.toAuthConfiguration(),
+            headers: queryTab.headers
+        )
     }
 
     @ViewBuilder
