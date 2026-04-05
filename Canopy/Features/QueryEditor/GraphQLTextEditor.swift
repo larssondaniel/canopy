@@ -59,8 +59,9 @@ struct GraphQLTextEditor: NSViewRepresentable {
         // Start observing after views are in hierarchy
         lineNumberView.startObserving()
 
-        // Set initial text
+        // Set initial text and apply syntax highlighting
         textView.string = text
+        GraphQLSyntaxHighlighter.highlight(textView)
 
         return stackView
     }
@@ -94,6 +95,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
             textView.selectedRanges = clampedRanges
         }
 
+        GraphQLSyntaxHighlighter.highlight(textView)
         textView.needsDisplay = true
     }
 
@@ -120,6 +122,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard !isUpdating, let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
+            GraphQLSyntaxHighlighter.highlight(textView)
         }
 
         func textView(
