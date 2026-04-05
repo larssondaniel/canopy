@@ -32,6 +32,8 @@ final class CompletionPanel: NSPanel {
         setupTableView()
         setupScrollView()
 
+        scrollView.frame = visualEffectView.bounds
+        scrollView.autoresizingMask = [.width, .height]
         visualEffectView.addSubview(scrollView)
         contentView = visualEffectView
     }
@@ -79,11 +81,6 @@ final class CompletionPanel: NSPanel {
         tableView.sizeLastColumnToFit()
     }
 
-    override func layoutIfNeeded() {
-        super.layoutIfNeeded()
-        scrollView.frame = visualEffectView.bounds
-    }
-
     // MARK: - Public API
 
     func show(items: [CompletionItem], at screenPoint: NSPoint, parentWindow: NSWindow) {
@@ -103,7 +100,7 @@ final class CompletionPanel: NSPanel {
 
         let adjustedFrame = adjustFrameForScreen(frame)
         setFrame(adjustedFrame, display: false)
-        scrollView.frame = visualEffectView.bounds
+        tableView.sizeLastColumnToFit()
 
         parentWindow.addChildWindow(self, ordered: .above)
         orderFront(nil)
@@ -132,7 +129,7 @@ final class CompletionPanel: NSPanel {
         frame.size.height = height
         frame.origin.y = oldTop - height
         setFrame(frame, display: true)
-        scrollView.frame = visualEffectView.bounds
+        tableView.sizeLastColumnToFit()
     }
 
     func selectedItem() -> CompletionItem? {
