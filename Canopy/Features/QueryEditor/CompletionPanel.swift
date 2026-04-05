@@ -9,7 +9,7 @@ final class CompletionPanel: NSPanel {
 
     private static let rowHeight: CGFloat = 20
     private static let maxVisibleRows = 10
-    private static let panelWidth: CGFloat = 340
+    private static let panelWidth: CGFloat = 260
     private static let cornerRadius: CGFloat = 6
 
     // MARK: - Init
@@ -224,12 +224,11 @@ extension CompletionPanel: NSTableViewDelegate {
 // MARK: - Cell View
 
 private final class CompletionCellView: NSView {
-    private let kindBadge = NSView()
+    private let badgeView = KindBadgeView()
     private let labelField = NSTextField(labelWithString: "")
-    private let detailField = NSTextField(labelWithString: "")
     private let selectionBackground = NSView()
 
-    private static let badgeSize: CGFloat = 8
+    private static let badgeSize: CGFloat = 16
     private static let selectionCornerRadius: CGFloat = 4
 
     override init(frame: NSRect) {
@@ -243,100 +242,103 @@ private final class CompletionCellView: NSView {
     }
 
     private func setupViews() {
-        // Selection background (rounded rect)
         selectionBackground.wantsLayer = true
         selectionBackground.layer?.cornerRadius = Self.selectionCornerRadius
         selectionBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(selectionBackground)
 
-        // Kind badge (colored square)
-        kindBadge.wantsLayer = true
-        kindBadge.layer?.cornerRadius = 2
-        kindBadge.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(kindBadge)
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badgeView)
 
-        // Label
-        labelField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        labelField.font = .systemFont(ofSize: 12)
         labelField.lineBreakMode = .byTruncatingTail
         labelField.drawsBackground = false
         labelField.isBezeled = false
         labelField.translatesAutoresizingMaskIntoConstraints = false
         addSubview(labelField)
 
-        // Detail (type annotation)
-        detailField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        detailField.textColor = .secondaryLabelColor
-        detailField.alignment = .right
-        detailField.lineBreakMode = .byTruncatingTail
-        detailField.drawsBackground = false
-        detailField.isBezeled = false
-        detailField.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(detailField)
-
         NSLayoutConstraint.activate([
-            // Selection background fills row with horizontal padding
             selectionBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             selectionBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             selectionBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             selectionBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
 
-            // Kind badge
-            kindBadge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            kindBadge.centerYAnchor.constraint(equalTo: centerYAnchor),
-            kindBadge.widthAnchor.constraint(equalToConstant: Self.badgeSize),
-            kindBadge.heightAnchor.constraint(equalToConstant: Self.badgeSize),
+            badgeView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            badgeView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badgeView.widthAnchor.constraint(equalToConstant: Self.badgeSize),
+            badgeView.heightAnchor.constraint(equalToConstant: Self.badgeSize),
 
-            // Label after badge
-            labelField.leadingAnchor.constraint(equalTo: kindBadge.trailingAnchor, constant: 6),
+            labelField.leadingAnchor.constraint(equalTo: badgeView.trailingAnchor, constant: 6),
             labelField.centerYAnchor.constraint(equalTo: centerYAnchor),
-            labelField.trailingAnchor.constraint(lessThanOrEqualTo: detailField.leadingAnchor, constant: -8),
-
-            // Detail right-aligned
-            detailField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            detailField.centerYAnchor.constraint(equalTo: centerYAnchor),
-            detailField.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
+            labelField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
         ])
 
         labelField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        detailField.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        detailField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     }
 
     func configure(with item: CompletionItem, isSelected: Bool) {
         labelField.stringValue = item.label
-        detailField.stringValue = item.detail ?? ""
+        badgeView.configure(for: item)
 
-        // Kind badge color
-        kindBadge.layer?.backgroundColor = badgeColor(for: item).cgColor
-
-        // Selection highlight
         if isSelected {
             selectionBackground.layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.6).cgColor
         } else {
             selectionBackground.layer?.backgroundColor = NSColor.clear.cgColor
         }
 
-        // Text styling
         if item.isDeprecated {
             labelField.textColor = .tertiaryLabelColor
-            detailField.textColor = .tertiaryLabelColor
         } else {
             labelField.textColor = isSelected ? .white : .labelColor
-            detailField.textColor = isSelected ? NSColor.white.withAlphaComponent(0.7) : .secondaryLabelColor
         }
     }
+}
 
-    private func badgeColor(for item: CompletionItem) -> NSColor {
+// MARK: - Kind Badge (Xcode-style letter in colored rounded rect)
+
+private final class KindBadgeView: NSView {
+    private let letterField = NSTextField(labelWithString: "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 3
+
+        letterField.font = .systemFont(ofSize: 9, weight: .bold)
+        letterField.alignment = .center
+        letterField.drawsBackground = false
+        letterField.isBezeled = false
+        letterField.textColor = .white
+        letterField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(letterField)
+
+        NSLayoutConstraint.activate([
+            letterField.centerXAnchor.constraint(equalTo: centerXAnchor),
+            letterField.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(for item: CompletionItem) {
+        let (letter, color) = badgeStyle(for: item)
+        letterField.stringValue = letter
+        layer?.backgroundColor = color.cgColor
+    }
+
+    private func badgeStyle(for item: CompletionItem) -> (String, NSColor) {
         switch item.kind {
         case .field:
             if item.label == "__typename" {
-                return .systemGray
+                return ("T", .systemGray)
             }
-            return .systemBlue
+            return ("F", .systemCyan)
         case .argument:
-            return .systemPurple
+            return ("A", .systemPurple)
         case .keyword:
-            return .systemPink
+            return ("K", .systemPink)
         }
     }
 }
