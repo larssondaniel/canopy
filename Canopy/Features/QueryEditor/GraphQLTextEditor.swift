@@ -344,6 +344,8 @@ struct GraphQLTextEditor: NSViewRepresentable {
             guard let panel = completionPanel, let item = panel.selectedItem() else { return }
 
             isAcceptingCompletion = true
+            lastInsertionWasSingleChar = false
+            completionDebouncer?.cancel()
             defer { isAcceptingCompletion = false }
 
             let cursorOffset = textView.selectedRange().location
