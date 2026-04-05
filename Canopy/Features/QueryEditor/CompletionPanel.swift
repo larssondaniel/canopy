@@ -72,7 +72,7 @@ final class CompletionPanel: NSPanel {
         scrollView.drawsBackground = false
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
-        scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        scrollView.contentInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
     }
 
     override func layoutIfNeeded() {
@@ -94,7 +94,7 @@ final class CompletionPanel: NSPanel {
         }
 
         let visibleRows = min(items.count, Self.maxVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight + 8 // +8 for top/bottom insets
+        let height = CGFloat(visibleRows) * Self.rowHeight + 4 // +8 for top/bottom insets
         let frame = NSRect(x: screenPoint.x, y: screenPoint.y - height, width: Self.panelWidth, height: height)
 
         let adjustedFrame = adjustFrameForScreen(frame)
@@ -122,7 +122,7 @@ final class CompletionPanel: NSPanel {
         }
 
         let visibleRows = min(newItems.count, Self.maxVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight + 8
+        let height = CGFloat(visibleRows) * Self.rowHeight + 4
         var frame = self.frame
         let oldTop = frame.maxY
         frame.size.height = height
@@ -259,10 +259,10 @@ private final class CompletionCellView: NSView {
         addSubview(labelField)
 
         NSLayoutConstraint.activate([
-            selectionBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            selectionBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            selectionBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            selectionBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            selectionBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
+            selectionBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+            selectionBackground.topAnchor.constraint(equalTo: topAnchor),
+            selectionBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             badgeView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             badgeView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -282,7 +282,7 @@ private final class CompletionCellView: NSView {
         badgeView.configure(for: item)
 
         if isSelected {
-            selectionBackground.layer?.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.6).cgColor
+            selectionBackground.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
         } else {
             selectionBackground.layer?.backgroundColor = NSColor.clear.cgColor
         }
@@ -290,7 +290,7 @@ private final class CompletionCellView: NSView {
         if item.isDeprecated {
             labelField.textColor = .tertiaryLabelColor
         } else {
-            labelField.textColor = isSelected ? .white : .labelColor
+            labelField.textColor = .labelColor
         }
     }
 }
