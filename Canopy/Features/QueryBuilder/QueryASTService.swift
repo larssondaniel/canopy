@@ -32,6 +32,44 @@ final class QueryASTService {
     /// Rebuilt alongside selectedPaths on every AST change.
     private(set) var argumentValues: [String: [String: String]] = [:]
 
+    /// Preserved selections for collapsed root operations.
+    /// Key: root field name (e.g. "user"), Value: set of child paths that were selected.
+    /// When a root operation is collapsed, its child selections are saved here.
+    /// When re-expanded, these are restored.
+    private(set) var preservedSelections: [String: Set<String>] = [:]
+
+    // MARK: - Preserved Selections
+
+    /// Save the current child selections for a root operation before removing it.
+    /// Copies all paths under `rootFieldName` from `selectedPaths` into the preserved store.
+    func preserveSelections(forRoot rootFieldName: String) {
+        let prefix = rootFieldName + "/"
+        let childPaths = selectedPaths.filter { $0.hasPrefix(prefix) }
+        // Include the root itself so we know it was selected
+        var paths = childPaths
+        if selectedPaths.contains(rootFieldName) {
+            paths.insert(rootFieldName)
+        }
+        preservedSelections[rootFieldName] = paths
+    }
+
+    /// Restore preserved selections for a root operation and remove them from the store.
+    /// Returns the set of paths that were preserved, or nil if none existed.
+    func restoreSelections(forRoot rootFieldName: String) -> Set<String>? {
+        preservedSelections.removeValue(forKey: rootFieldName)
+    }
+
+    /// Check if there are preserved selections for a root operation.
+    func hasPreservedSelections(forRoot rootFieldName: String) -> Bool {
+        guard let paths = preservedSelections[rootFieldName] else { return false }
+        return !paths.isEmpty
+    }
+
+    /// Clear preserved selections for a root operation (e.g. when user manually deselects).
+    func clearPreservedSelections(forRoot rootFieldName: String) {
+        preservedSelections.removeValue(forKey: rootFieldName)
+    }
+
     // MARK: - Parse
 
     /// Parse query text into a Document AST.

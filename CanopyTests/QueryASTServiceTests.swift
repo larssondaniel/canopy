@@ -573,6 +573,72 @@ struct QueryASTServiceTests {
         #expect(result.contains("Alice"))
     }
 
+    // MARK: - Preserved Selections Tests
+
+    @Test("preserveSelections stores child paths for a root operation")
+    func preserveSelectionsStoresChildPaths() {
+        let service = QueryASTService()
+        service.parse("{ user { id name } }")
+
+        service.preserveSelections(forRoot: "user")
+
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+        let preserved = service.preservedSelections["user"]
+        #expect(preserved?.contains("user") == true)
+        #expect(preserved?.contains("user/id") == true)
+        #expect(preserved?.contains("user/name") == true)
+    }
+
+    @Test("restoreSelections returns preserved paths and removes them")
+    func restoreSelectionsRoundTrip() {
+        let service = QueryASTService()
+        service.parse("{ user { id name } }")
+
+        service.preserveSelections(forRoot: "user")
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+
+        let restored = service.restoreSelections(forRoot: "user")
+        #expect(restored?.contains("user/id") == true)
+        #expect(restored?.contains("user/name") == true)
+        #expect(!service.hasPreservedSelections(forRoot: "user"))
+    }
+
+    @Test("Re-collapse overwrites preserved selections")
+    func preserveSelectionsOverwrites() {
+        let service = QueryASTService()
+        service.parse("{ user { id } }")
+
+        service.preserveSelections(forRoot: "user")
+        #expect(service.preservedSelections["user"]?.contains("user/id") == true)
+
+        // Now parse with different selection and re-preserve
+        service.parse("{ user { name email } }")
+        service.preserveSelections(forRoot: "user")
+
+        let preserved = service.preservedSelections["user"]!
+        #expect(!preserved.contains("user/id"))
+        #expect(preserved.contains("user/name"))
+        #expect(preserved.contains("user/email"))
+    }
+
+    @Test("clearPreservedSelections removes stored paths")
+    func clearPreservedSelections() {
+        let service = QueryASTService()
+        service.parse("{ user { id } }")
+
+        service.preserveSelections(forRoot: "user")
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+
+        service.clearPreservedSelections(forRoot: "user")
+        #expect(!service.hasPreservedSelections(forRoot: "user"))
+    }
+
+    @Test("hasPreservedSelections returns false for unknown root")
+    func hasPreservedSelectionsUnknown() {
+        let service = QueryASTService()
+        #expect(!service.hasPreservedSelections(forRoot: "nonexistent"))
+    }
+
     @Test("Toggle mutation field without rootTypeName falls back to queryTypeName and fails gracefully")
     func toggleMutationFieldWithoutRootTypeName() {
         let service = QueryASTService()
