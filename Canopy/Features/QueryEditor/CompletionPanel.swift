@@ -56,6 +56,7 @@ final class CompletionPanel: NSPanel {
         tableView.addTableColumn(column)
 
         tableView.headerView = nil
+        tableView.style = .plain
         tableView.rowHeight = Self.rowHeight
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.backgroundColor = .clear
