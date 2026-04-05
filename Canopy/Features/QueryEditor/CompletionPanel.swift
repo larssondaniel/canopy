@@ -72,7 +72,6 @@ final class CompletionPanel: NSPanel {
         scrollView.drawsBackground = false
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
-        scrollView.contentInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
     }
 
     override func layoutIfNeeded() {
@@ -94,7 +93,7 @@ final class CompletionPanel: NSPanel {
         }
 
         let visibleRows = min(items.count, Self.maxVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight + 4 // +8 for top/bottom insets
+        let height = CGFloat(visibleRows) * Self.rowHeight // +8 for top/bottom insets
         let frame = NSRect(x: screenPoint.x, y: screenPoint.y - height, width: Self.panelWidth, height: height)
 
         let adjustedFrame = adjustFrameForScreen(frame)
@@ -122,7 +121,7 @@ final class CompletionPanel: NSPanel {
         }
 
         let visibleRows = min(newItems.count, Self.maxVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight + 4
+        let height = CGFloat(visibleRows) * Self.rowHeight
         var frame = self.frame
         let oldTop = frame.maxY
         frame.size.height = height
@@ -165,7 +164,7 @@ final class CompletionPanel: NSPanel {
         var adjusted = frame
 
         if adjusted.origin.y < screenFrame.origin.y {
-            adjusted.origin.y = frame.origin.y + frame.height + Self.rowHeight + 4
+            adjusted.origin.y = frame.origin.y + frame.height + Self.rowHeight
         }
         if adjusted.maxX > screenFrame.maxX {
             adjusted.origin.x = screenFrame.maxX - adjusted.width
