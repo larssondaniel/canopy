@@ -7,6 +7,11 @@ options:
   groupSortPosition: top
   createIntermediateGroups: true
 
+packages:
+  GraphQL:
+    url: https://github.com/GraphQLSwift/GraphQL
+    exactVersion: "4.1.0"
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -31,6 +36,8 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         SWIFT_EMIT_LOC_STRINGS: true
         ENABLE_PREVIEWS: true
+    dependencies:
+      - package: GraphQL
 
   CanopyTests:
     type: bundle.unit-test

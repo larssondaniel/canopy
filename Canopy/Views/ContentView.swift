@@ -8,15 +8,21 @@ struct ContentView: View {
     @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
     @Query private var activeStates: [ActiveEnvironmentState]
+    @State private var astService = QueryASTService()
 
     private var activeEnvironment: AppEnvironment? {
         guard let activeID = activeStates.first?.activeEnvironmentID else { return nil }
         return environments.first { $0.id == activeID }
     }
 
+    private var activeQueryTab: QueryTab? {
+        guard let queryID = appState.selectedTab?.queryID else { return nil }
+        return tabs.first { $0.id == queryID }
+    }
+
     var body: some View {
         NavigationSplitView {
-            Sidebar()
+            Sidebar(activeTab: activeQueryTab, astService: astService)
         } detail: {
             VStack(spacing: 0) {
                 // Tab bar — shown when 2+ tabs are open
@@ -95,6 +101,14 @@ struct ContentView: View {
 
         schemaStore.setActiveEndpoint(
             resolved,
+            method: queryTab.method,
+            auth: queryTab.authConfig.toAuthConfiguration(),
+            headers: queryTab.headers
+        )
+
+        // Auto-load schema from cache (or fetch if needed) when endpoint becomes active
+        schemaStore.fetchSchema(
+            endpoint: resolved,
             method: queryTab.method,
             auth: queryTab.authConfig.toAuthConfiguration(),
             headers: queryTab.headers

@@ -43,8 +43,30 @@ struct GraphQLSchema: Sendable {
 
     /// Build a processed schema from the raw DTO.
     /// Filters out introspection meta-types (__) and pre-computes groupings.
+    /// Also pre-computes all IntrospectionTypeRef → GraphQLTypeRef conversions
+    /// to eliminate the nonisolated(unsafe) cache race condition.
     static func from(_ dto: GraphQLSchemaDTO) -> GraphQLSchema {
         let userTypes = dto.types.filter { !$0.name.hasPrefix("__") }
+
+        // Pre-compute all type ref conversions eagerly
+        for type in userTypes {
+            for field in type.fields ?? [] {
+                _ = field.type.toTypeRef()
+                for arg in field.args {
+                    _ = arg.type.toTypeRef()
+                }
+            }
+            for inputField in type.inputFields ?? [] {
+                _ = inputField.type.toTypeRef()
+            }
+            for iface in type.interfaces ?? [] {
+                _ = iface.toTypeRef()
+            }
+            for possibleType in type.possibleTypes ?? [] {
+                _ = possibleType.toTypeRef()
+            }
+        }
+
         let typesByName = Dictionary(uniqueKeysWithValues: userTypes.map { ($0.name, $0) })
         let grouped = Dictionary(grouping: userTypes, by: \.kind)
             .mapValues { $0.sorted(by: { $0.name < $1.name }) }

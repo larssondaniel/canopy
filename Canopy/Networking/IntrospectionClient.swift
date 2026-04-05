@@ -231,6 +231,17 @@ struct IntrospectionClient: Sendable {
         auth: AuthConfiguration,
         headers: [CodableHeader]
     ) async throws -> GraphQLSchema {
+        let (schema, _) = try await fetchSchemaWithRawData(url: url, method: method, auth: auth, headers: headers)
+        return schema
+    }
+
+    /// Fetch schema and return both the decoded schema and the raw introspection JSON for caching.
+    func fetchSchemaWithRawData(
+        url: URL,
+        method: HTTPMethod,
+        auth: AuthConfiguration,
+        headers: [CodableHeader]
+    ) async throws -> (GraphQLSchema, Data) {
         // Try full query first, fall back to legacy on error
         do {
             return try await performIntrospection(url: url, method: method, query: Self.fullQuery, auth: auth, headers: headers)
@@ -246,7 +257,7 @@ struct IntrospectionClient: Sendable {
         query: String,
         auth: AuthConfiguration,
         headers: [CodableHeader]
-    ) async throws -> GraphQLSchema {
+    ) async throws -> (GraphQLSchema, Data) {
         let request = try Self.buildIntrospectionRequest(
             url: url, method: method, query: query, auth: auth, headers: headers
         )
@@ -286,7 +297,7 @@ struct IntrospectionClient: Sendable {
         // Already off main actor (IntrospectionClient is not @MainActor), decode directly
         do {
             let decoded = try JSONDecoder().decode(IntrospectionResponse.self, from: data)
-            return GraphQLSchema.from(decoded.data.__schema)
+            return (GraphQLSchema.from(decoded.data.__schema), data)
         } catch {
             throw IntrospectionError.decodingFailed(error)
         }
