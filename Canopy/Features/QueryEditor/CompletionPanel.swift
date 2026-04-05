@@ -50,6 +50,7 @@ final class CompletionPanel: NSPanel {
     private func setupTableView() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("completion"))
         column.width = Self.panelWidth
+        column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
 
         tableView.headerView = nil
@@ -57,6 +58,7 @@ final class CompletionPanel: NSPanel {
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .none
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
@@ -74,6 +76,7 @@ final class CompletionPanel: NSPanel {
         scrollView.horizontalScrollElasticity = .none
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = .init(top: 0, left: 0, bottom: 0, right: 0)
+        tableView.sizeLastColumnToFit()
     }
 
     override func layoutIfNeeded() {
