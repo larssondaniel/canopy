@@ -8,19 +8,15 @@ struct GraphQLTextEditor: NSViewRepresentable {
     private static let tabReplacement = "  " // 2 spaces
 
     func makeNSView(context: Context) -> NSScrollView {
-        let textStorage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
-        textStorage.addLayoutManager(layoutManager)
+        // Use factory method — it does critical internal setup for text rendering
+        let scrollView = NSTextView.scrollableTextView()
+        guard let factoryTextView = scrollView.documentView as? NSTextView else { return scrollView }
 
-        let textContainer = NSTextContainer(containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
-        textContainer.widthTracksTextView = true
-        textContainer.lineFragmentPadding = 8
-        layoutManager.addTextContainer(textContainer)
-
-        let textView = GraphQLNSTextView(frame: .zero, textContainer: textContainer)
+        // Create our custom subclass and swap it in
+        let textView = GraphQLNSTextView(frame: factoryTextView.frame)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineFragmentPadding = 8
         textView.font = Self.editorFont
-        textView.textColor = .textColor
-        textView.backgroundColor = .textBackgroundColor
         textView.isRichText = false
         textView.allowsUndo = true
         textView.isEditable = true
@@ -28,6 +24,8 @@ struct GraphQLTextEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
         textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -35,17 +33,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.isGrammarCheckingEnabled = false
         textView.delegate = context.coordinator
-
-        let scrollView = NSScrollView()
         scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-
-        // Match text view width to scroll view
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
 
         // Line number gutter
         let rulerView = LineNumberRulerView(scrollView: scrollView, orientation: .verticalRuler)
