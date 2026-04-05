@@ -35,6 +35,10 @@ struct RootOperationRowView: View {
     let isDeprecated: Bool
     let hasPreservedSelections: Bool
     var showTypes: Bool = false
+    /// Full field data for the Inspect popover.
+    var inspectableField: GraphQLField? = nil
+
+    @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
 
     var body: some View {
         HStack(spacing: 4) {
@@ -61,5 +65,17 @@ struct RootOperationRowView: View {
         .contentShape(Rectangle())
         .accessibilityLabel("\(fieldName)\(isSelected ? ", selected" : "")")
         .accessibilityHint("Click to \(isSelected ? "deselect" : "select")")
+        .contextMenu {
+            if let field = inspectableField {
+                Button("Inspect") {
+                    inspectAction?.inspect(field, typeName)
+                }
+                Divider()
+            }
+            Button("Copy Field Name") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(fieldName, forType: .string)
+            }
+        }
     }
 }

@@ -11,9 +11,15 @@ struct SetArgumentAction {
     let setArgument: @MainActor (_ fieldName: String, _ parentPath: [String], _ argName: String, _ value: String, _ rootTypeName: String?) -> Void
 }
 
+/// Environment key for the inspect field action.
+struct InspectFieldAction {
+    let inspect: @MainActor (_ field: GraphQLField, _ resolvedTypeName: String) -> Void
+}
+
 extension EnvironmentValues {
     @Entry var toggleFieldAction: ToggleFieldAction? = nil
     @Entry var setArgumentAction: SetArgumentAction? = nil
+    @Entry var inspectFieldAction: InspectFieldAction? = nil
 }
 
 /// Visual query builder tree with segmented operation filter and click-to-toggle
@@ -30,6 +36,7 @@ struct QueryExplorerView: View {
     @AppStorage("selectedOperationSegment") private var selectedSegment: String = OperationSegment.queries.rawValue
     @AppStorage("showFieldTypes") private var showTypes = false
     @State private var showTypeBrowser = false
+    @State private var inspectedField: InspectedFieldInfo?
 
     var body: some View {
         Group {
@@ -208,6 +215,12 @@ struct QueryExplorerView: View {
             .listStyle(.sidebar)
             .environment(\.toggleFieldAction, toggleAction)
             .environment(\.setArgumentAction, setArgAction)
+            .environment(\.inspectFieldAction, InspectFieldAction { field, resolvedTypeName in
+                inspectedField = InspectedFieldInfo(field: field, resolvedTypeName: resolvedTypeName)
+            })
+            .popover(item: $inspectedField) { info in
+                FieldInspectPopover(field: info.field, resolvedTypeName: info.resolvedTypeName)
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -422,7 +435,8 @@ private struct RootExpandableFieldView: View {
                     isSelected: isSelected,
                     isDeprecated: field.isDeprecated,
                     hasPreservedSelections: hasPreservedSelections,
-                    showTypes: showTypes
+                    showTypes: showTypes,
+                    inspectableField: field
                 )
                 .onTapGesture {
                     handleRootTap()
@@ -437,7 +451,8 @@ private struct RootExpandableFieldView: View {
                 isSelected: isSelected,
                 isDeprecated: field.isDeprecated,
                 hasPreservedSelections: hasPreservedSelections,
-                showTypes: showTypes
+                showTypes: showTypes,
+                inspectableField: field
             )
             .onTapGesture {
                 handleRootTap()
@@ -558,6 +573,7 @@ private struct FieldListView: View {
                 pathKey: pathKey,
                 rootTypeName: rootTypeName,
                 showTypes: showTypes,
+                inspectableField: field,
                 args: field.args,
                 currentArgValues: argumentValues[pathKey] ?? [:],
                 subFields: isObject && !isCircular ? returnType?.fields : nil,
@@ -594,6 +610,7 @@ private struct ExplorerFieldView: View {
     let pathKey: String
     let rootTypeName: String
     var showTypes: Bool = false
+    var inspectableField: GraphQLField? = nil
     let args: [GraphQLInputValue]
     let currentArgValues: [String: String]
     let subFields: [GraphQLField]?
@@ -619,7 +636,8 @@ private struct ExplorerFieldView: View {
                 isDisabled: isDisabled,
                 parentPath: parentPath,
                 rootTypeName: rootTypeName,
-                showTypes: showTypes
+                showTypes: showTypes,
+                inspectableField: inspectableField
             )
         }
     }
@@ -674,7 +692,8 @@ private struct ExplorerFieldView: View {
                 isDisabled: isDisabled,
                 parentPath: parentPath,
                 rootTypeName: rootTypeName,
-                showTypes: showTypes
+                showTypes: showTypes,
+                inspectableField: inspectableField
             )
         }
     }

@@ -15,8 +15,11 @@ struct QueryFieldRowView: View {
     var rootTypeName: String? = nil
     var showTypes: Bool = false
     var depth: Int = 0
+    /// Full field data for the Inspect popover (optional — not all callers have it).
+    var inspectableField: GraphQLField? = nil
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
+    @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
 
     var body: some View {
         HStack(spacing: 4) {
@@ -65,6 +68,12 @@ struct QueryFieldRowView: View {
         .padding(.vertical, 1)
         .accessibilityLabel("\(fieldName)\(showTypes ? ", \(typeName)" : "")")
         .contextMenu {
+            if let field = inspectableField {
+                Button("Inspect") {
+                    inspectAction?.inspect(field, typeName)
+                }
+                Divider()
+            }
             Button("Copy Field Name") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(fieldName, forType: .string)
