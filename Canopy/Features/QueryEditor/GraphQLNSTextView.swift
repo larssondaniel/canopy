@@ -3,6 +3,18 @@ import AppKit
 final class GraphQLNSTextView: NSTextView {
     private let highlightColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.08)
 
+    /// Called when the user presses Ctrl+Space to trigger manual completion.
+    var completionTrigger: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control),
+           event.charactersIgnoringModifiers == " " {
+            completionTrigger?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         drawCurrentLineHighlight(in: rect)

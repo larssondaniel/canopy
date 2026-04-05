@@ -1,8 +1,10 @@
 import SwiftUI
 import AppKit
+import GraphQL
 
 struct GraphQLTextEditor: NSViewRepresentable {
     @Binding var text: String
+    var schema: GraphQLSchema?
 
     private static let editorFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     private static let tabReplacement = "  " // 2 spaces
@@ -34,15 +36,34 @@ struct GraphQLTextEditor: NSViewRepresentable {
         textView.isGrammarCheckingEnabled = false
         scrollView.documentView = textView
 
+        // Wire up Ctrl+Space trigger
+        textView.completionTrigger = { [weak coordinator = context.coordinator] in
+            coordinator?.triggerCompletion(textView: textView, manual: true)
+        }
+
         // Selection change observer for current-line highlight redraw
         let selectionToken = NotificationCenter.default.addObserver(
             forName: NSTextView.didChangeSelectionNotification,
             object: textView,
             queue: .main
-        ) { _ in
+        ) { [weak coordinator = context.coordinator] _ in
             textView.needsDisplay = true
+            // Dismiss completion on cursor movement (unless we're accepting a completion)
+            coordinator?.handleSelectionChange(textView: textView)
         }
         context.coordinator.observerTokens.append(selectionToken)
+
+        // Dismiss completion on scroll
+        if let clipView = scrollView.contentView as? NSClipView {
+            let scrollToken = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak coordinator = context.coordinator] _ in
+                coordinator?.completionPanel?.dismiss()
+            }
+            context.coordinator.observerTokens.append(scrollToken)
+        }
 
         // Line number gutter — plain NSView beside the scroll view (CotEditor pattern)
         let lineNumberView = LineNumberView()
@@ -109,7 +130,13 @@ struct GraphQLTextEditor: NSViewRepresentable {
         var parent: GraphQLTextEditor
         var isUpdating = false
         var isHandlingKeyEvent = false
+        var isAcceptingCompletion = false
         var observerTokens: [Any] = []
+
+        // Completion state
+        var completionPanel: CompletionPanel?
+        private var completionDebouncer: DispatchWorkItem?
+        private var lastInsertionWasSingleChar = false
 
         init(_ parent: GraphQLTextEditor) {
             self.parent = parent
@@ -117,13 +144,24 @@ struct GraphQLTextEditor: NSViewRepresentable {
 
         deinit {
             observerTokens.forEach { NotificationCenter.default.removeObserver($0) }
+            completionPanel?.dismiss()
+            completionDebouncer?.cancel()
         }
+
+        // MARK: - Text Change
 
         func textDidChange(_ notification: Notification) {
             guard !isUpdating, let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
             GraphQLSyntaxHighlighter.highlight(textView)
+
+            // Schedule auto-completion if the last change was a single character insertion
+            if lastInsertionWasSingleChar, parent.schema != nil {
+                scheduleCompletion(textView: textView)
+            }
         }
+
+        // MARK: - Key Interception
 
         func textView(
             _ textView: NSTextView,
@@ -132,6 +170,21 @@ struct GraphQLTextEditor: NSViewRepresentable {
         ) -> Bool {
             guard let replacement = replacementString else { return true }
             guard !isHandlingKeyEvent else { return true }
+
+            // Track whether this is a single-character insertion (typing, not paste)
+            lastInsertionWasSingleChar = (replacement.count == 1)
+
+            // When completion panel is visible, intercept Tab and Enter
+            if let panel = completionPanel, panel.isVisible {
+                if replacement == "\t" {
+                    acceptCompletion(textView: textView)
+                    return false
+                }
+                if replacement == "\n" {
+                    acceptCompletion(textView: textView)
+                    return false
+                }
+            }
 
             // Tab key → insert 2 spaces
             if replacement == "\t" {
@@ -145,16 +198,203 @@ struct GraphQLTextEditor: NSViewRepresentable {
                 return false
             }
 
+            // Dismiss panel on non-identifier characters when panel is visible
+            if let panel = completionPanel, panel.isVisible {
+                let isIdentifierChar = replacement.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+                if !isIdentifierChar {
+                    panel.dismiss()
+                }
+            }
+
             return true
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            // When completion panel is visible
+            if let panel = completionPanel, panel.isVisible {
+                // Esc → dismiss
+                if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                    panel.dismiss()
+                    return true
+                }
+                // Up arrow → move selection up
+                if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                    panel.moveSelectionUp()
+                    return true
+                }
+                // Down arrow → move selection down
+                if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                    panel.moveSelectionDown()
+                    return true
+                }
+            } else {
+                // Panel not visible — Esc triggers manual completion
+                if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                    triggerCompletion(textView: textView, manual: true)
+                    return true
+                }
+            }
+
             // Shift+Tab (backtab) → block dedent
             if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
                 handleBackTab(textView: textView)
                 return true
             }
             return false
+        }
+
+        // MARK: - Selection Change
+
+        func handleSelectionChange(textView: NSTextView) {
+            guard !isAcceptingCompletion else { return }
+            // If the panel is visible, re-filter on cursor movement
+            // (but dismiss if cursor moved out of prefix context)
+            if let panel = completionPanel, panel.isVisible {
+                let prefix = CompletionEngine.extractPrefix(text: textView.string, cursorOffset: textView.selectedRange().location)
+                if prefix.isEmpty && !textView.string.isEmpty {
+                    // Check if we're still in a valid completion context
+                    let items = CompletionEngine.completions(
+                        text: textView.string,
+                        cursorOffset: textView.selectedRange().location,
+                        schema: parent.schema,
+                        document: parseDocument(textView.string)
+                    )
+                    if items.isEmpty {
+                        panel.dismiss()
+                    } else {
+                        panel.updateItems(items)
+                    }
+                }
+            }
+        }
+
+        // MARK: - Completion Trigger
+
+        func triggerCompletion(textView: NSTextView, manual: Bool = false) {
+            completionDebouncer?.cancel()
+
+            guard let schema = parent.schema else { return }
+
+            let cursorOffset = textView.selectedRange().location
+            let text = textView.string
+            let document = parseDocument(text)
+
+            let items = CompletionEngine.completions(
+                text: text,
+                cursorOffset: cursorOffset,
+                schema: schema,
+                document: document
+            )
+
+            guard !items.isEmpty else {
+                completionPanel?.dismiss()
+                return
+            }
+
+            // Get cursor screen position
+            guard let screenPoint = cursorScreenPoint(textView: textView) else { return }
+            guard let window = textView.window else { return }
+
+            if let panel = completionPanel, panel.isVisible {
+                panel.updateItems(items)
+            } else {
+                let panel = completionPanel ?? CompletionPanel()
+                self.completionPanel = panel
+                panel.show(items: items, at: screenPoint, parentWindow: window)
+            }
+        }
+
+        private func scheduleCompletion(textView: NSTextView) {
+            completionDebouncer?.cancel()
+
+            let work = DispatchWorkItem { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.triggerCompletion(textView: textView)
+            }
+            completionDebouncer = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(150), execute: work)
+        }
+
+        // MARK: - Completion Acceptance
+
+        private func acceptCompletion(textView: NSTextView) {
+            guard let panel = completionPanel, let item = panel.selectedItem() else { return }
+
+            isAcceptingCompletion = true
+            defer { isAcceptingCompletion = false }
+
+            let cursorOffset = textView.selectedRange().location
+            let prefix = CompletionEngine.extractPrefix(text: textView.string, cursorOffset: cursorOffset)
+            let replaceRange = NSRange(location: cursorOffset - prefix.count, length: prefix.count)
+
+            // Determine if we need to auto-insert { } for object-type fields
+            var fullInsertText = item.insertText
+            var cursorInsideBraces = false
+
+            if item.kind == .field, let schema = parent.schema {
+                let text = textView.string
+                let document = parseDocument(text)
+                let context = CompletionEngine.resolveContext(
+                    text: text,
+                    cursorOffset: cursorOffset,
+                    schema: schema,
+                    document: document
+                )
+
+                if case .field(let parentType) = context {
+                    // Check if the accepted field returns an object type needing sub-selection
+                    if let field = parentType.fields?.first(where: { $0.name == item.insertText }) {
+                        let returnTypeName = field.type.toTypeRef().namedType
+                        if let returnType = schema.type(named: returnTypeName),
+                           returnType.kind == .object || returnType.kind == .interface || returnType.kind == .union {
+                            fullInsertText = "\(item.insertText) { }"
+                            cursorInsideBraces = true
+                        }
+                    }
+                }
+            }
+
+            isHandlingKeyEvent = true
+            textView.undoManager?.beginUndoGrouping()
+            textView.insertText(fullInsertText, replacementRange: replaceRange)
+            textView.undoManager?.endUndoGrouping()
+            isHandlingKeyEvent = false
+
+            // Place cursor inside braces if we auto-inserted them
+            if cursorInsideBraces {
+                let newCursorPos = replaceRange.location + fullInsertText.count - 2 // before " }"
+                textView.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+
+                // Auto-trigger completion inside the new braces after a short delay
+                scheduleCompletion(textView: textView)
+            }
+
+            panel.dismiss()
+        }
+
+        // MARK: - Helpers
+
+        private func cursorScreenPoint(textView: NSTextView) -> NSPoint? {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return nil }
+
+            let cursorOffset = textView.selectedRange().location
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: min(cursorOffset, max(0, (textView.string as NSString).length - 1)))
+            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+
+            // Position below the current line
+            var point = NSPoint(x: lineRect.origin.x + textContainer.lineFragmentPadding,
+                               y: lineRect.maxY + textView.textContainerOrigin.y)
+
+            // Convert to window coordinates, then to screen
+            point = textView.convert(point, to: nil)
+            guard let window = textView.window else { return nil }
+            let screenPoint = window.convertPoint(toScreen: point)
+            return screenPoint
+        }
+
+        private func parseDocument(_ text: String) -> Document? {
+            try? GraphQL.parse(source: text)
         }
 
         // MARK: - Tab Handling
