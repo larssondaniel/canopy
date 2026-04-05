@@ -1,5 +1,4 @@
 import Foundation
-import GraphQL
 
 // MARK: - Data Model
 
@@ -33,8 +32,7 @@ enum CompletionEngine {
     static func completions(
         text: String,
         cursorOffset: Int,
-        schema: GraphQLSchema?,
-        document: Document?
+        schema: GraphQLSchema?
     ) -> [CompletionItem] {
         guard let schema else { return [] }
 
@@ -47,7 +45,7 @@ enum CompletionEngine {
         }
 
         let prefix = extractPrefix(text: text, cursorOffset: cursorOffset)
-        let context = resolveContext(text: text, cursorOffset: cursorOffset, schema: schema, document: document)
+        let context = resolveContext(text: text, cursorOffset: cursorOffset, schema: schema)
 
         switch context {
         case .root:
@@ -61,154 +59,19 @@ enum CompletionEngine {
         }
     }
 
-    // MARK: - Context Resolution (Hybrid)
+    // MARK: - Context Resolution
 
     static func resolveContext(
         text: String,
         cursorOffset: Int,
-        schema: GraphQLSchema,
-        document: Document?
+        schema: GraphQLSchema
     ) -> CompletionContext {
-        // Try AST-based resolution first
-        if let doc = document {
-            if let context = resolveContextFromAST(text: text, cursorOffset: cursorOffset, schema: schema, document: doc) {
-                return context
-            }
-        }
-
-        // Fall back to brace scanning
+        // Use brace scanning — it handles both complete and incomplete documents
+        // reliably without depending on AST source location accuracy.
         return resolveContextFromBraceScan(text: text, cursorOffset: cursorOffset, schema: schema)
     }
 
-    // MARK: - AST-Based Resolution
-
-    private static func resolveContextFromAST(
-        text: String,
-        cursorOffset: Int,
-        schema: GraphQLSchema,
-        document: Document
-    ) -> CompletionContext? {
-        // Find which operation definition contains the cursor
-        guard let op = findOperationContainingCursor(in: document, cursorOffset: cursorOffset) else {
-            // Cursor might be outside any operation — root context
-            return .root
-        }
-
-        let rootTypeName = rootTypeNameForOperation(op, schema: schema)
-        guard let rootTypeName else { return .root }
-
-        // Walk the selection sets to find the deepest one containing the cursor
-        let fieldPath = findFieldPathInSelectionSet(
-            op.selectionSet,
-            cursorOffset: cursorOffset,
-            path: []
-        )
-
-        // Check if cursor is inside argument parentheses
-        if let argContext = checkArgumentContext(text: text, cursorOffset: cursorOffset, fieldPath: fieldPath, schema: schema, rootTypeName: rootTypeName) {
-            return argContext
-        }
-
-        // Resolve the type at the end of the field path
-        let resolvedType = resolveTypeForPath(fieldPath, schema: schema, rootTypeName: rootTypeName)
-        if let resolvedType {
-            return .field(parentType: resolvedType)
-        }
-
-        // If path is empty, we're inside the root operation's selection set
-        if let rootType = schema.type(named: rootTypeName) {
-            return .field(parentType: rootType)
-        }
-
-        return nil
-    }
-
-    private static func findOperationContainingCursor(
-        in document: Document,
-        cursorOffset: Int
-    ) -> OperationDefinition? {
-        for definition in document.definitions {
-            guard let op = definition as? OperationDefinition else { continue }
-            if let loc = op.loc, cursorOffset >= loc.start, cursorOffset <= loc.end {
-                return op
-            }
-        }
-        // If no loc info or cursor outside all operations, use the first one
-        return document.definitions.first as? OperationDefinition
-    }
-
-    private static func rootTypeNameForOperation(
-        _ op: OperationDefinition,
-        schema: GraphQLSchema
-    ) -> String? {
-        switch op.operation {
-        case .query: return schema.queryTypeName
-        case .mutation: return schema.mutationTypeName
-        case .subscription: return schema.subscriptionTypeName
-        }
-    }
-
-    /// Walk selection sets recursively to find the deepest field path containing the cursor.
-    private static func findFieldPathInSelectionSet(
-        _ selectionSet: SelectionSet,
-        cursorOffset: Int,
-        path: [String]
-    ) -> [String] {
-        for selection in selectionSet.selections {
-            guard let field = selection as? GraphQL.Field else { continue }
-            guard let nestedSS = field.selectionSet else { continue }
-
-            // Check if cursor is inside this field's selection set braces
-            if let loc = nestedSS.loc, cursorOffset >= loc.start, cursorOffset <= loc.end {
-                let newPath = path + [field.name.value]
-                // Recurse to find deeper nesting
-                let deeper = findFieldPathInSelectionSet(nestedSS, cursorOffset: cursorOffset, path: newPath)
-                return deeper
-            }
-        }
-        return path
-    }
-
-    private static func checkArgumentContext(
-        text: String,
-        cursorOffset: Int,
-        fieldPath: [String],
-        schema: GraphQLSchema,
-        rootTypeName: String
-    ) -> CompletionContext? {
-        let nsText = text as NSString
-
-        // Scan backward from cursor to find unmatched opening paren
-        var parenDepth = 0
-        var pos = cursorOffset - 1
-        while pos >= 0 {
-            let char = Character(UnicodeScalar(nsText.character(at: pos))!)
-            if char == ")" { parenDepth += 1 }
-            else if char == "(" {
-                if parenDepth == 0 {
-                    // Found unmatched open paren — extract field name before it
-                    let fieldName = extractWordBefore(text: text, offset: pos)
-                    guard !fieldName.isEmpty else { return nil }
-
-                    // Suppress for directive arguments (@include, @skip, etc.)
-                    let beforeField = nsText.substring(to: pos).trimmingCharacters(in: .whitespaces)
-                    if beforeField.hasSuffix("@\(fieldName)") { return nil }
-
-                    let parentType = resolveTypeForPath(fieldPath, schema: schema, rootTypeName: rootTypeName)
-                        ?? schema.type(named: rootTypeName)
-                    if let field = parentType?.fields?.first(where: { $0.name == fieldName }) {
-                        return .argument(field: field)
-                    }
-                    return nil
-                }
-                parenDepth -= 1
-            }
-            pos -= 1
-        }
-        return nil
-    }
-
-    // MARK: - Brace-Scan Fallback
+    // MARK: - Brace-Scan Context Resolution
 
     static func resolveContextFromBraceScan(
         text: String,
@@ -218,6 +81,9 @@ enum CompletionEngine {
         let nsText = text as NSString
         let scanStart = max(0, cursorOffset - 10_000)
 
+        // Pre-compute string and comment ranges so the scanner can skip them
+        let nonCodeRanges = findNonCodeRanges(text: text)
+
         var braceDepth = 0
         var parenDepth = 0
         var fieldNames: [String] = []
@@ -225,15 +91,14 @@ enum CompletionEngine {
         var foundOpenBrace = false
         var pos = cursorOffset - 1
 
-        // Scan backward to find context
         while pos >= scanStart {
-            let charCode = nsText.character(at: pos)
-            let char = Character(UnicodeScalar(charCode)!)
-
-            // Skip content inside comments (scan backward: find # before the current line)
-            if char == "\n" || pos == scanStart {
-                // Check if anything between the last newline and current scan was a comment
+            // Skip positions inside strings or comments
+            if isInNonCodeRange(pos, ranges: nonCodeRanges) {
+                pos -= 1
+                continue
             }
+
+            let char = Character(UnicodeScalar(nsText.character(at: pos))!)
 
             // Track parens
             if char == ")" { parenDepth += 1; pos -= 1; continue }
@@ -284,7 +149,7 @@ enum CompletionEngine {
             }
         }
 
-        // Inside an operation's root selection set (keyword found but no field names collected)
+        // Inside an operation's root selection set
         if foundOpenBrace {
             if let rootType = rootType(for: operationKeyword, schema: schema) {
                 return .field(parentType: rootType)
@@ -292,6 +157,43 @@ enum CompletionEngine {
         }
 
         return .root
+    }
+
+    /// Find all string and comment ranges in the text (for skipping during brace scan).
+    private static func findNonCodeRanges(text: String) -> [NSRange] {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        var ranges: [NSRange] = []
+
+        // Block strings
+        let blockStringPattern = try! NSRegularExpression(pattern: #"""""[\s\S]*?""""#)
+        for match in blockStringPattern.matches(in: text, range: fullRange) {
+            ranges.append(match.range)
+        }
+
+        // Regular strings
+        let stringPattern = try! NSRegularExpression(pattern: #""[^"\\]*(?:\\.[^"\\]*)*""#)
+        for match in stringPattern.matches(in: text, range: fullRange) {
+            ranges.append(match.range)
+        }
+
+        // Comments
+        let commentPattern = try! NSRegularExpression(pattern: #"#[^\n]*"#)
+        for match in commentPattern.matches(in: text, range: fullRange) {
+            ranges.append(match.range)
+        }
+
+        return ranges
+    }
+
+    /// Check if a character position falls inside any non-code range.
+    private static func isInNonCodeRange(_ pos: Int, ranges: [NSRange]) -> Bool {
+        for range in ranges {
+            if pos >= range.location && pos < NSMaxRange(range) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Extract the field name before a `{`, handling alias syntax (`alias: fieldName {`).

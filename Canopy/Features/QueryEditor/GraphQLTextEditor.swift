@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import GraphQL
 
 struct GraphQLTextEditor: NSViewRepresentable {
     @Binding var text: String
@@ -256,8 +255,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
                     let items = CompletionEngine.completions(
                         text: textView.string,
                         cursorOffset: textView.selectedRange().location,
-                        schema: parent.schema,
-                        document: parseDocument(textView.string)
+                        schema: parent.schema
                     )
                     if items.isEmpty {
                         panel.dismiss()
@@ -277,13 +275,11 @@ struct GraphQLTextEditor: NSViewRepresentable {
 
             let cursorOffset = textView.selectedRange().location
             let text = textView.string
-            let document = parseDocument(text)
 
             let items = CompletionEngine.completions(
                 text: text,
                 cursorOffset: cursorOffset,
-                schema: schema,
-                document: document
+                schema: schema
             )
 
             guard !items.isEmpty else {
@@ -333,12 +329,10 @@ struct GraphQLTextEditor: NSViewRepresentable {
 
             if item.kind == .field, let schema = parent.schema {
                 let text = textView.string
-                let document = parseDocument(text)
                 let context = CompletionEngine.resolveContext(
                     text: text,
                     cursorOffset: cursorOffset,
-                    schema: schema,
-                    document: document
+                    schema: schema
                 )
 
                 if case .field(let parentType) = context {
@@ -391,10 +385,6 @@ struct GraphQLTextEditor: NSViewRepresentable {
             guard let window = textView.window else { return nil }
             let screenPoint = window.convertPoint(toScreen: point)
             return screenPoint
-        }
-
-        private func parseDocument(_ text: String) -> Document? {
-            try? GraphQL.parse(source: text)
         }
 
         // MARK: - Tab Handling

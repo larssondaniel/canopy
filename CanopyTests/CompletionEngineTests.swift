@@ -136,7 +136,7 @@ struct CompletionEngineTests {
     @Test("Empty document suggests root keywords")
     func emptyDocumentRootKeywords() {
         let schema = makeTestSchema()
-        let items = CompletionEngine.completions(text: "", cursorOffset: 0, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: "", cursorOffset: 0, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("query"))
@@ -148,7 +148,7 @@ struct CompletionEngineTests {
     @Test("Root keywords filter by prefix")
     func rootKeywordsFilterByPrefix() {
         let schema = makeTestSchema()
-        let items = CompletionEngine.completions(text: "q", cursorOffset: 1, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: "q", cursorOffset: 1, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("query"))
@@ -162,7 +162,7 @@ struct CompletionEngineTests {
         let schema = makeTestSchema()
         // "query { " — cursor after the opening brace
         let text = "query { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("user"))
@@ -175,7 +175,7 @@ struct CompletionEngineTests {
     func fieldCompletionsNested() {
         let schema = makeTestSchema()
         let text = "query { user { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("id"))
@@ -189,7 +189,7 @@ struct CompletionEngineTests {
     func fieldCompletionsWithPrefix() {
         let schema = makeTestSchema()
         let text = "query { us"
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("user"))
@@ -201,7 +201,7 @@ struct CompletionEngineTests {
     func prefixFilteringCaseInsensitive() {
         let schema = makeTestSchema()
         let text = "query { US"
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("user"))
@@ -211,7 +211,7 @@ struct CompletionEngineTests {
     func deprecatedFieldsSortLast() {
         let schema = makeTestSchema()
         let text = "query { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let oldFieldItem = items.first { $0.label == "oldField" }
         let userItem = items.first { $0.label == "user" }
@@ -227,7 +227,7 @@ struct CompletionEngineTests {
     func typenameForObjectType() {
         let schema = makeTestSchema()
         let text = "query { user { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("__typename"))
@@ -238,7 +238,7 @@ struct CompletionEngineTests {
         let schema = makeTestSchema()
         // SearchResult is a union type — cursor inside search { }
         let text = "query { search { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("__typename"))
@@ -251,7 +251,7 @@ struct CompletionEngineTests {
     func argumentCompletions() {
         let schema = makeTestSchema()
         let text = "query { user("
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("id"))
@@ -265,7 +265,7 @@ struct CompletionEngineTests {
     func anonymousQuery() {
         let schema = makeTestSchema()
         let text = "{ "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("user"))
@@ -278,7 +278,7 @@ struct CompletionEngineTests {
     func mutationBraceScan() {
         let schema = makeTestSchema()
         let text = "mutation { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("createUser"))
@@ -289,7 +289,7 @@ struct CompletionEngineTests {
     func subscriptionBraceScan() {
         let schema = makeTestSchema()
         let text = "subscription { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("userCreated"))
@@ -301,7 +301,7 @@ struct CompletionEngineTests {
     func cursorInsideComment() {
         let schema = makeTestSchema()
         let text = "query { # us"
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         #expect(items.isEmpty)
     }
@@ -310,7 +310,7 @@ struct CompletionEngineTests {
     func cursorInsideString() {
         let schema = makeTestSchema()
         let text = "query { user(id: \"abc"
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         #expect(items.isEmpty)
     }
@@ -319,7 +319,7 @@ struct CompletionEngineTests {
 
     @Test("No schema returns empty results")
     func noSchema() {
-        let items = CompletionEngine.completions(text: "query { ", cursorOffset: 8, schema: nil, document: nil)
+        let items = CompletionEngine.completions(text: "query { ", cursorOffset: 8, schema: nil)
         #expect(items.isEmpty)
     }
 
@@ -340,7 +340,7 @@ struct CompletionEngineTests {
         let schema = makeTestSchema()
         // Intentionally broken — missing closing braces
         let text = "query { user { na"
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let labels = items.map(\.label)
         #expect(labels.contains("name"))
@@ -352,7 +352,7 @@ struct CompletionEngineTests {
     func fieldItemsIncludeTypeDisplay() {
         let schema = makeTestSchema()
         let text = "query { "
-        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema, document: nil)
+        let items = CompletionEngine.completions(text: text, cursorOffset: text.count, schema: schema)
 
         let userItem = items.first { $0.label == "user" }
         #expect(userItem?.detail == "User")
