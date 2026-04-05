@@ -47,9 +47,9 @@ struct QueryFieldRowView: View {
             .disabled(isDisabled)
 
             Text(fieldName)
-                .fontWeight(isSelected ? .semibold : .medium)
+                .fontWeight(isSelected ? .semibold : .regular)
                 .strikethrough(isDeprecated)
-                .foregroundStyle(isDeprecated ? .tertiary : .primary)
+                .foregroundStyle(isDeprecated ? .tertiary : .secondary)
 
             if isCircular {
                 Text("(circular)")
@@ -61,11 +61,11 @@ struct QueryFieldRowView: View {
 
             if showTypes {
                 Text(typeName)
-                    .foregroundStyle(.secondary)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
         }
-        .font(.system(.callout, design: .monospaced))
-        .padding(.vertical, 1)
+        .font(.callout)
         .accessibilityLabel("\(fieldName)\(showTypes ? ", \(typeName)" : "")")
         .contextMenu {
             if let field = inspectableField {

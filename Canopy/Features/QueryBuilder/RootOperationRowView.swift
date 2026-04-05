@@ -33,7 +33,6 @@ struct RootOperationRowView: View {
     let operationType: OperationSegment
     let isSelected: Bool
     let isDeprecated: Bool
-    let hasPreservedSelections: Bool
     var showTypes: Bool = false
     /// Full field data for the Inspect popover.
     var inspectableField: GraphQLField? = nil
@@ -43,25 +42,19 @@ struct RootOperationRowView: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(fieldName)
-                .fontWeight(isSelected ? .bold : .medium)
-                .foregroundStyle(isDeprecated ? .secondary : operationType.accentColor)
+                .fontWeight(.medium)
+                .foregroundStyle(isDeprecated ? .secondary : .primary)
                 .strikethrough(isDeprecated)
-
-            if hasPreservedSelections && !isSelected {
-                Circle()
-                    .fill(operationType.accentColor.opacity(0.5))
-                    .frame(width: 5, height: 5)
-                    .help("Has preserved selections")
-            }
 
             Spacer()
 
             if showTypes {
                 Text(typeName)
-                    .foregroundStyle(.secondary)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
         }
-        .font(.system(.callout, design: .monospaced))
+        .font(.callout)
         .contentShape(Rectangle())
         .accessibilityLabel("\(fieldName)\(isSelected ? ", selected" : "")")
         .accessibilityHint("Click to \(isSelected ? "deselect" : "select")")

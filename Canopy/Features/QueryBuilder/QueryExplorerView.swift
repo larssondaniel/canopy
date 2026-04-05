@@ -213,6 +213,7 @@ struct QueryExplorerView: View {
                 }
             }
             .listStyle(.sidebar)
+            .environment(\.defaultMinListRowHeight, 4)
             .environment(\.toggleFieldAction, toggleAction)
             .environment(\.setArgumentAction, setArgAction)
             .environment(\.inspectFieldAction, InspectFieldAction { field, resolvedTypeName in
@@ -333,7 +334,6 @@ private struct RootFieldListView: View {
                 }()
                 let pathKey = field.name
                 let isSelected = selectedPaths.contains(pathKey)
-                let hasPreserved = astService.hasPreservedSelections(forRoot: field.name)
 
                 RootExpandableFieldView(
                     field: field,
@@ -341,7 +341,6 @@ private struct RootFieldListView: View {
                     namedType: namedType,
                     isObject: isObject,
                     isSelected: isSelected,
-                    hasPreservedSelections: hasPreserved,
                     operationType: operationType,
                     rootTypeName: rootTypeName,
                     schema: schema,
@@ -373,7 +372,6 @@ private struct RootExpandableFieldView: View {
     let namedType: String
     let isObject: Bool
     let isSelected: Bool
-    let hasPreservedSelections: Bool
     let operationType: OperationSegment
     let rootTypeName: String
     let schema: GraphQLSchema
@@ -434,12 +432,13 @@ private struct RootExpandableFieldView: View {
                     operationType: operationType,
                     isSelected: isSelected,
                     isDeprecated: field.isDeprecated,
-                    hasPreservedSelections: hasPreservedSelections,
                     showTypes: showTypes,
                     inspectableField: field
                 )
                 .onTapGesture {
-                    handleRootTap()
+                    withAnimation {
+                        rootExpandedBinding.wrappedValue = !expandedPaths.contains(field.name)
+                    }
                 }
             }
         } else {
@@ -450,71 +449,89 @@ private struct RootExpandableFieldView: View {
                 operationType: operationType,
                 isSelected: isSelected,
                 isDeprecated: field.isDeprecated,
-                hasPreservedSelections: hasPreservedSelections,
                 showTypes: showTypes,
                 inspectableField: field
             )
             .onTapGesture {
-                handleRootTap()
+                guard !isDisabled else { return }
+                toggleAction?.toggle(field.name, [], rootTypeName)
             }
         }
     }
 
+    /// Unified binding: expanding = select in AST, collapsing = deselect from AST.
+    /// Both chevron clicks and label clicks go through this single code path.
     private var rootExpandedBinding: Binding<Bool> {
         Binding(
             get: { expandedPaths.contains(field.name) },
             set: { newValue in
+                guard !isDisabled else { return }
+
                 if newValue {
+                    // Expanding → select the operation in the AST
+                    if !isSelected {
+                        if let preserved = astService.restoreSelections(forRoot: field.name) {
+                            // Step 1: Add the root (which auto-adds a default sub-selection)
+                            toggleAction?.toggle(field.name, [], rootTypeName)
+                            if let tab = activeTab {
+                                let rootPrefix = field.name + "/"
+                                let preservedChildren = preserved.filter { $0.hasPrefix(rootPrefix) }
+
+                                // Step 2: Add preserved children that aren't already selected
+                                for path in preservedChildren.sorted() {
+                                    if !astService.isFieldSelected(
+                                        fieldName: path.split(separator: "/").last.map(String.init) ?? "",
+                                        parentPath: path.split(separator: "/").dropLast().map(String.init)
+                                    ) {
+                                        let components = path.split(separator: "/").map(String.init)
+                                        if components.count >= 2 {
+                                            let childField = components.last!
+                                            let parentPath = Array(components.dropLast())
+                                            let newQuery = astService.toggleField(
+                                                fieldName: childField,
+                                                parentPath: parentPath,
+                                                schema: schema,
+                                                currentQuery: tab.query,
+                                                rootTypeName: rootTypeName
+                                            )
+                                            tab.query = newQuery
+                                        }
+                                    }
+                                }
+
+                                // Step 3: Remove default sub-fields that weren't in the preserved set
+                                let currentChildren = astService.selectedPaths.filter { $0.hasPrefix(rootPrefix) }
+                                for path in currentChildren where !preservedChildren.contains(path) {
+                                    let components = path.split(separator: "/").map(String.init)
+                                    if components.count >= 2 {
+                                        let childField = components.last!
+                                        let parentPath = Array(components.dropLast())
+                                        let newQuery = astService.toggleField(
+                                            fieldName: childField,
+                                            parentPath: parentPath,
+                                            schema: schema,
+                                            currentQuery: tab.query,
+                                            rootTypeName: rootTypeName
+                                        )
+                                        tab.query = newQuery
+                                    }
+                                }
+                            }
+                        } else {
+                            toggleAction?.toggle(field.name, [], rootTypeName)
+                        }
+                    }
                     expandedPaths.insert(field.name)
                 } else {
-                    expandedPaths.remove(field.name)
-                    // When collapsing a selected root, preserve selections
+                    // Collapsing → deselect the operation from the AST
                     if isSelected {
                         astService.preserveSelections(forRoot: field.name)
-                        // Remove the operation from the query
                         toggleAction?.toggle(field.name, [], rootTypeName)
                     }
+                    expandedPaths.remove(field.name)
                 }
             }
         )
-    }
-
-    private func handleRootTap() {
-        guard !isDisabled else { return }
-
-        if isSelected {
-            // Deselect: preserve selections and collapse
-            astService.preserveSelections(forRoot: field.name)
-            toggleAction?.toggle(field.name, [], rootTypeName)
-            expandedPaths.remove(field.name)
-        } else {
-            // Select: check for preserved selections to restore
-            if let preserved = astService.restoreSelections(forRoot: field.name) {
-                // Restore by toggling the root on, then re-adding child fields
-                toggleAction?.toggle(field.name, [], rootTypeName)
-                // Re-add each preserved child field
-                guard let tab = activeTab else { return }
-                let rootPrefix = field.name + "/"
-                for path in preserved.sorted() where path.hasPrefix(rootPrefix) {
-                    let components = path.split(separator: "/").map(String.init)
-                    if components.count >= 2 {
-                        let fieldName = components.last!
-                        let parentPath = Array(components.dropLast())
-                        let newQuery = astService.toggleField(
-                            fieldName: fieldName,
-                            parentPath: parentPath,
-                            schema: schema,
-                            currentQuery: tab.query,
-                            rootTypeName: rootTypeName
-                        )
-                        tab.query = newQuery
-                    }
-                }
-            } else {
-                toggleAction?.toggle(field.name, [], rootTypeName)
-            }
-            expandedPaths.insert(field.name)
-        }
     }
 
     private func filterFields(_ fields: [GraphQLField]) -> [GraphQLField] {
@@ -765,7 +782,7 @@ private struct ArgumentRowView: View {
                 Spacer()
                 TextField("value", text: $editText)
                     .textFieldStyle(.plain)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.system(.caption, design: .monospaced))
                     .frame(maxWidth: 100)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
@@ -777,7 +794,7 @@ private struct ArgumentRowView: View {
                     }
             }
         }
-        .font(.system(.caption2, design: .monospaced))
+        .font(.system(.caption, design: .monospaced))
         .padding(.leading, 8)
         .task(id: currentValue) {
             if !isFocused {
