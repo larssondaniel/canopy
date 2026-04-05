@@ -3,12 +3,12 @@ import SwiftUI
 /// Environment key for the toggle field action, used by QueryFieldRowView
 /// to avoid passing closures (which defeat SwiftUI body-skip optimization).
 struct ToggleFieldAction {
-    let toggle: @MainActor (_ fieldName: String, _ parentPath: [String]) -> Void
+    let toggle: @MainActor (_ fieldName: String, _ parentPath: [String], _ rootTypeName: String?) -> Void
 }
 
 /// Environment key for the set argument action.
 struct SetArgumentAction {
-    let setArgument: @MainActor (_ fieldName: String, _ parentPath: [String], _ argName: String, _ value: String) -> Void
+    let setArgument: @MainActor (_ fieldName: String, _ parentPath: [String], _ argName: String, _ value: String, _ rootTypeName: String?) -> Void
 }
 
 extension EnvironmentValues {
@@ -96,18 +96,19 @@ struct QueryExplorerView: View {
 
     @ViewBuilder
     private func explorerTree(schema: GraphQLSchema, endpoint: String) -> some View {
-        let toggleAction = ToggleFieldAction { fieldName, parentPath in
+        let toggleAction = ToggleFieldAction { fieldName, parentPath, rootTypeName in
             guard let tab = activeTab else { return }
             let newQuery = astService.toggleField(
                 fieldName: fieldName,
                 parentPath: parentPath,
                 schema: schema,
-                currentQuery: tab.query
+                currentQuery: tab.query,
+                rootTypeName: rootTypeName
             )
             tab.query = newQuery
         }
 
-        let setArgAction = SetArgumentAction { fieldName, parentPath, argName, value in
+        let setArgAction = SetArgumentAction { fieldName, parentPath, argName, value, rootTypeName in
             guard let tab = activeTab else { return }
             // Build full argument map: keep existing values, update the changed one
             var allArgs = astService.argumentValues[(parentPath + [fieldName]).joined(separator: "/")] ?? [:]
@@ -121,7 +122,8 @@ struct QueryExplorerView: View {
                 parentPath: parentPath,
                 arguments: allArgs,
                 schema: schema,
-                currentQuery: tab.query
+                currentQuery: tab.query,
+                rootTypeName: rootTypeName
             )
             tab.query = newQuery
         }
@@ -161,6 +163,7 @@ struct QueryExplorerView: View {
                     title: "Queries",
                     icon: "magnifyingglass",
                     rootType: queryType,
+                    rootTypeName: queryTypeName,
                     schema: schema,
                     parentPath: [],
                     searchText: debouncedSearchText,
@@ -177,6 +180,7 @@ struct QueryExplorerView: View {
                     title: "Mutations",
                     icon: "arrow.triangle.2.circlepath",
                     rootType: mutationType,
+                    rootTypeName: mutationTypeName,
                     schema: schema,
                     parentPath: [],
                     searchText: debouncedSearchText,
@@ -193,6 +197,7 @@ struct QueryExplorerView: View {
                     title: "Subscriptions",
                     icon: "antenna.radiowaves.left.and.right",
                     rootType: subscriptionType,
+                    rootTypeName: subscriptionTypeName,
                     schema: schema,
                     parentPath: [],
                     searchText: debouncedSearchText,
@@ -225,6 +230,7 @@ private struct OperationSectionView: View {
     let title: String
     let icon: String
     let rootType: GraphQLFullType
+    let rootTypeName: String
     let schema: GraphQLSchema
     let parentPath: [String]
     let searchText: String
@@ -244,6 +250,7 @@ private struct OperationSectionView: View {
                     fields: fields,
                     schema: schema,
                     parentPath: parentPath,
+                    rootTypeName: rootTypeName,
                     selectedPaths: selectedPaths,
                     argumentValues: argumentValues,
                     isDisabled: isDisabled,
@@ -277,6 +284,7 @@ private struct FieldListView: View {
     let fields: [GraphQLField]
     let schema: GraphQLSchema
     let parentPath: [String]
+    let rootTypeName: String
     let selectedPaths: Set<String>
     let argumentValues: [String: [String: String]]
     let isDisabled: Bool
@@ -318,6 +326,7 @@ private struct FieldListView: View {
                 parentPath: parentPath,
                 fieldPath: parentPath + [field.name],
                 pathKey: pathKey,
+                rootTypeName: rootTypeName,
                 args: field.args,
                 currentArgValues: argumentValues[pathKey] ?? [:],
                 subFields: isObject && !isCircular ? returnType?.fields : nil,
@@ -353,6 +362,7 @@ private struct ExplorerFieldView: View {
     let parentPath: [String]
     let fieldPath: [String]
     let pathKey: String
+    let rootTypeName: String
     let args: [GraphQLInputValue]
     let currentArgValues: [String: String]
     let subFields: [GraphQLField]?
@@ -377,7 +387,8 @@ private struct ExplorerFieldView: View {
                 isCircular: isCircular,
                 hasArguments: hasArguments,
                 isDisabled: isDisabled,
-                parentPath: parentPath
+                parentPath: parentPath,
+                rootTypeName: rootTypeName
             )
         }
     }
@@ -399,7 +410,8 @@ private struct ExplorerFieldView: View {
                     isFieldSelected: isSelected,
                     isDisabled: isDisabled,
                     fieldName: fieldName,
-                    parentPath: parentPath
+                    parentPath: parentPath,
+                    rootTypeName: rootTypeName
                 )
             }
 
@@ -412,6 +424,7 @@ private struct ExplorerFieldView: View {
                     fields: filtered,
                     schema: schema,
                     parentPath: fieldPath,
+                    rootTypeName: rootTypeName,
                     selectedPaths: selectedPaths,
                     argumentValues: argumentValues,
                     isDisabled: isDisabled,
@@ -429,7 +442,8 @@ private struct ExplorerFieldView: View {
                 isCircular: false,
                 hasArguments: hasArguments,
                 isDisabled: isDisabled,
-                parentPath: parentPath
+                parentPath: parentPath,
+                rootTypeName: rootTypeName
             )
         }
     }
@@ -460,6 +474,7 @@ private struct ArgumentRowView: View {
     let isDisabled: Bool
     let fieldName: String
     let parentPath: [String]
+    var rootTypeName: String? = nil
 
     @State private var editText: String = ""
     @State private var localChecked: Bool = false
@@ -480,7 +495,7 @@ private struct ArgumentRowView: View {
                         localChecked = false
                         editText = ""
                         // Remove the argument from the query
-                        setArgAction?.setArgument(fieldName, parentPath, argName, "")
+                        setArgAction?.setArgument(fieldName, parentPath, argName, "", rootTypeName)
                     }
                 }
             )) {
@@ -532,7 +547,7 @@ private struct ArgumentRowView: View {
     private func commitValue() {
         let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed != currentValue {
-            setArgAction?.setArgument(fieldName, parentPath, argName, trimmed)
+            setArgAction?.setArgument(fieldName, parentPath, argName, trimmed, rootTypeName)
         }
     }
 }

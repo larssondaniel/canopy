@@ -12,6 +12,7 @@ struct QueryFieldRowView: View {
     let hasArguments: Bool
     let isDisabled: Bool
     let parentPath: [String]
+    var rootTypeName: String? = nil
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
 
@@ -20,7 +21,7 @@ struct QueryFieldRowView: View {
             Toggle(isOn: Binding(
                 get: { isSelected },
                 set: { _ in
-                    toggleAction?.toggle(fieldName, parentPath)
+                    toggleAction?.toggle(fieldName, parentPath, rootTypeName)
                 }
             )) {
                 EmptyView()
