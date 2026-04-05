@@ -13,11 +13,24 @@ struct QueryFieldRowView: View {
     let isDisabled: Bool
     let parentPath: [String]
     var rootTypeName: String? = nil
+    var showTypes: Bool = false
+    var depth: Int = 0
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
 
     var body: some View {
         HStack(spacing: 4) {
+            // Indent guide lines
+            if depth > 0 {
+                ForEach(0..<depth, id: \.self) { _ in
+                    Rectangle()
+                        .fill(.quaternary)
+                        .frame(width: 0.5)
+                        .padding(.vertical, -2)
+                }
+                .frame(width: CGFloat(depth) * 12)
+            }
+
             Toggle(isOn: Binding(
                 get: { isSelected },
                 set: { _ in
@@ -31,9 +44,9 @@ struct QueryFieldRowView: View {
             .disabled(isDisabled)
 
             Text(fieldName)
-                .fontWeight(.medium)
+                .fontWeight(isSelected ? .semibold : .medium)
                 .strikethrough(isDeprecated)
-                .foregroundStyle(isDeprecated ? .secondary : .primary)
+                .foregroundStyle(isDeprecated ? .tertiary : .primary)
 
             if isCircular {
                 Text("(circular)")
@@ -43,11 +56,14 @@ struct QueryFieldRowView: View {
 
             Spacer()
 
-            Text(typeName)
-                .foregroundStyle(.secondary)
+            if showTypes {
+                Text(typeName)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .font(.system(.caption, design: .monospaced))
-        .accessibilityLabel("\(fieldName), \(typeName)")
+        .font(.system(.callout, design: .monospaced))
+        .padding(.vertical, 1)
+        .accessibilityLabel("\(fieldName)\(showTypes ? ", \(typeName)" : "")")
         .contextMenu {
             Button("Copy Field Name") {
                 NSPasteboard.general.clearContents()
