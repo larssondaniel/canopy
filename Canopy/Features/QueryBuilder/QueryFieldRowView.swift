@@ -12,15 +12,32 @@ struct QueryFieldRowView: View {
     let hasArguments: Bool
     let isDisabled: Bool
     let parentPath: [String]
+    var rootTypeName: String? = nil
+    var showTypes: Bool = false
+    var depth: Int = 0
+    /// Full field data for the Inspect popover (optional — not all callers have it).
+    var inspectableField: GraphQLField? = nil
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
+    @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
 
     var body: some View {
         HStack(spacing: 4) {
+            // Indent guide lines
+            if depth > 0 {
+                ForEach(0..<depth, id: \.self) { _ in
+                    Rectangle()
+                        .fill(.quaternary)
+                        .frame(width: 0.5)
+                        .padding(.vertical, -2)
+                }
+                .frame(width: CGFloat(depth) * 12)
+            }
+
             Toggle(isOn: Binding(
                 get: { isSelected },
                 set: { _ in
-                    toggleAction?.toggle(fieldName, parentPath)
+                    toggleAction?.toggle(fieldName, parentPath, rootTypeName)
                 }
             )) {
                 EmptyView()
@@ -30,9 +47,9 @@ struct QueryFieldRowView: View {
             .disabled(isDisabled)
 
             Text(fieldName)
-                .fontWeight(.medium)
+                .fontWeight(isSelected ? .semibold : .regular)
                 .strikethrough(isDeprecated)
-                .foregroundStyle(isDeprecated ? .secondary : .primary)
+                .foregroundStyle(isDeprecated ? .tertiary : .secondary)
 
             if isCircular {
                 Text("(circular)")
@@ -42,12 +59,21 @@ struct QueryFieldRowView: View {
 
             Spacer()
 
-            Text(typeName)
-                .foregroundStyle(.secondary)
+            if showTypes {
+                Text(typeName)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
         }
-        .font(.system(.caption, design: .monospaced))
-        .accessibilityLabel("\(fieldName), \(typeName)")
+        .font(.callout)
+        .accessibilityLabel("\(fieldName)\(showTypes ? ", \(typeName)" : "")")
         .contextMenu {
+            if let field = inspectableField {
+                Button("Inspect") {
+                    inspectAction?.inspect(field, typeName)
+                }
+                Divider()
+            }
             Button("Copy Field Name") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(fieldName, forType: .string)

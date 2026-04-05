@@ -32,6 +32,44 @@ final class QueryASTService {
     /// Rebuilt alongside selectedPaths on every AST change.
     private(set) var argumentValues: [String: [String: String]] = [:]
 
+    /// Preserved selections for collapsed root operations.
+    /// Key: root field name (e.g. "user"), Value: set of child paths that were selected.
+    /// When a root operation is collapsed, its child selections are saved here.
+    /// When re-expanded, these are restored.
+    private(set) var preservedSelections: [String: Set<String>] = [:]
+
+    // MARK: - Preserved Selections
+
+    /// Save the current child selections for a root operation before removing it.
+    /// Copies all paths under `rootFieldName` from `selectedPaths` into the preserved store.
+    func preserveSelections(forRoot rootFieldName: String) {
+        let prefix = rootFieldName + "/"
+        let childPaths = selectedPaths.filter { $0.hasPrefix(prefix) }
+        // Include the root itself so we know it was selected
+        var paths = childPaths
+        if selectedPaths.contains(rootFieldName) {
+            paths.insert(rootFieldName)
+        }
+        preservedSelections[rootFieldName] = paths
+    }
+
+    /// Restore preserved selections for a root operation and remove them from the store.
+    /// Returns the set of paths that were preserved, or nil if none existed.
+    func restoreSelections(forRoot rootFieldName: String) -> Set<String>? {
+        preservedSelections.removeValue(forKey: rootFieldName)
+    }
+
+    /// Check if there are preserved selections for a root operation.
+    func hasPreservedSelections(forRoot rootFieldName: String) -> Bool {
+        guard let paths = preservedSelections[rootFieldName] else { return false }
+        return !paths.isEmpty
+    }
+
+    /// Clear preserved selections for a root operation (e.g. when user manually deselects).
+    func clearPreservedSelections(forRoot rootFieldName: String) {
+        preservedSelections.removeValue(forKey: rootFieldName)
+    }
+
     // MARK: - Parse
 
     /// Parse query text into a Document AST.
@@ -151,14 +189,15 @@ final class QueryASTService {
         fieldName: String,
         parentPath: [String],
         schema: GraphQLSchema,
-        currentQuery: String
+        currentQuery: String,
+        rootTypeName: String? = nil
     ) -> String {
         let isSelected = isFieldSelected(fieldName: fieldName, parentPath: parentPath)
 
         if isSelected {
             return removeField(fieldName: fieldName, parentPath: parentPath, currentQuery: currentQuery)
         } else {
-            return addField(fieldName: fieldName, parentPath: parentPath, schema: schema, currentQuery: currentQuery)
+            return addField(fieldName: fieldName, parentPath: parentPath, schema: schema, currentQuery: currentQuery, rootTypeName: rootTypeName ?? schema.queryTypeName)
         }
     }
 
@@ -168,10 +207,11 @@ final class QueryASTService {
         fieldName: String,
         parentPath: [String],
         schema: GraphQLSchema,
-        currentQuery: String
+        currentQuery: String,
+        rootTypeName: String?
     ) -> String {
         // Determine the return type of the field being added
-        let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema)
+        let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema, rootTypeName: rootTypeName)
 
         // Build the field snippet to parse
         let snippet: String
@@ -445,12 +485,15 @@ final class QueryASTService {
         parentPath: [String],
         arguments: [String: String],
         schema: GraphQLSchema,
-        currentQuery: String
+        currentQuery: String,
+        rootTypeName: String? = nil
     ) -> String {
         guard let document = currentDocument else { return currentQuery }
 
+        let resolvedRootTypeName = rootTypeName ?? schema.queryTypeName
+
         // Resolve schema info for the field to get argument types
-        let schemaArgs = resolveFieldArgs(fieldName: fieldName, parentPath: parentPath, schema: schema)
+        let schemaArgs = resolveFieldArgs(fieldName: fieldName, parentPath: parentPath, schema: schema, rootTypeName: resolvedRootTypeName)
 
         // Build the argument string for the snippet
         var argParts: [String] = []
@@ -465,7 +508,7 @@ final class QueryASTService {
         let argString = argParts.isEmpty ? "" : "(\(argParts.joined(separator: ", ")))"
 
         // Need a valid snippet — check if field returns an object type
-        let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema)
+        let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema, rootTypeName: resolvedRootTypeName)
         let needsSubSelection = fieldType.map { hasSubFields($0, schema: schema) } ?? false
         let snippet: String
         if needsSubSelection {
@@ -567,12 +610,15 @@ final class QueryASTService {
     }
 
     /// Resolve the argument type names for a field from the schema.
+    /// The `rootTypeName` parameter specifies which root type to start traversal from
+    /// (e.g. the query, mutation, or subscription type name).
     private func resolveFieldArgs(
         fieldName: String,
         parentPath: [String],
-        schema: GraphQLSchema
+        schema: GraphQLSchema,
+        rootTypeName: String?
     ) -> [String: String] {
-        var currentTypeName = schema.queryTypeName
+        var currentTypeName = rootTypeName
         for pathField in parentPath {
             guard let typeName = currentTypeName,
                   let type = schema.type(named: typeName),
@@ -598,27 +644,23 @@ final class QueryASTService {
     // MARK: - Schema Helpers
 
     /// Resolve the GraphQL type name for a field at a given path.
+    /// The `rootTypeName` parameter specifies which root type to start traversal from
+    /// (e.g. the query, mutation, or subscription type name).
     private func resolveFieldType(
         fieldName: String,
         parentPath: [String],
-        schema: GraphQLSchema
+        schema: GraphQLSchema,
+        rootTypeName: String?
     ) -> GraphQLFullType? {
-        // Start from the root operation type
-        var currentTypeName: String?
-        if parentPath.isEmpty {
-            // fieldName is on the root query/mutation/subscription type
-            currentTypeName = schema.queryTypeName
-        } else {
-            // Walk the schema to find the type at parentPath
-            currentTypeName = schema.queryTypeName
-            for pathField in parentPath {
-                guard let typeName = currentTypeName,
-                      let type = schema.type(named: typeName),
-                      let field = type.fields?.first(where: { $0.name == pathField }) else {
-                    return nil
-                }
-                currentTypeName = field.type.toTypeRef().namedType
+        // Start from the specified root operation type
+        var currentTypeName = rootTypeName
+        for pathField in parentPath {
+            guard let typeName = currentTypeName,
+                  let type = schema.type(named: typeName),
+                  let field = type.fields?.first(where: { $0.name == pathField }) else {
+                return nil
             }
+            currentTypeName = field.type.toTypeRef().namedType
         }
 
         guard let typeName = currentTypeName,

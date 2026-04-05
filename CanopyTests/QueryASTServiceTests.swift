@@ -19,7 +19,7 @@ struct QueryASTServiceTests {
             "__schema": {
               "queryType": { "name": "Query" },
               "mutationType": { "name": "Mutation" },
-              "subscriptionType": null,
+              "subscriptionType": { "name": "Subscription" },
               "types": [
                 {
                   "kind": "OBJECT", "name": "Query", "description": null,
@@ -79,6 +79,17 @@ struct QueryASTServiceTests {
                     {"name": "id", "description": null, "args": [], "type": {"kind": "NON_NULL", "name": null, "ofType": {"kind": "SCALAR", "name": "ID", "ofType": null}}, "isDeprecated": false, "deprecationReason": null},
                     {"name": "title", "description": null, "args": [], "type": {"kind": "SCALAR", "name": "String", "ofType": null}, "isDeprecated": false, "deprecationReason": null},
                     {"name": "author", "description": null, "args": [], "type": {"kind": "OBJECT", "name": "User", "ofType": null}, "isDeprecated": false, "deprecationReason": null}
+                  ],
+                  "inputFields": null, "interfaces": [], "enumValues": null, "possibleTypes": null
+                },
+                {
+                  "kind": "OBJECT", "name": "Subscription", "description": null,
+                  "fields": [
+                    {
+                      "name": "userCreated", "description": null, "args": [],
+                      "type": {"kind": "OBJECT", "name": "User", "ofType": null},
+                      "isDeprecated": false, "deprecationReason": null
+                    }
                   ],
                   "inputFields": null, "interfaces": [], "enumValues": null, "possibleTypes": null
                 },
@@ -494,5 +505,155 @@ struct QueryASTServiceTests {
         // Re-parse the result
         service.parse(result)
         #expect(service.argumentValues["user"]?["id"] == "xyz")
+    }
+
+    // MARK: - Mutation/Subscription Toggle Tests
+
+    @Test("Toggle mutation field on with rootTypeName resolves correctly")
+    func toggleMutationField() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Toggle createUser (a mutation field that returns User — should auto-select "id")
+        let result = service.toggleField(
+            fieldName: "createUser",
+            parentPath: [],
+            schema: schema,
+            currentQuery: "",
+            rootTypeName: schema.mutationTypeName
+        )
+
+        #expect(result.contains("createUser"))
+        #expect(result.contains("id")) // User has "id", so auto-selected
+    }
+
+    @Test("Toggle subscription field on with rootTypeName resolves correctly")
+    func toggleSubscriptionField() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Toggle userCreated (a subscription field that returns User)
+        let result = service.toggleField(
+            fieldName: "userCreated",
+            parentPath: [],
+            schema: schema,
+            currentQuery: "",
+            rootTypeName: schema.subscriptionTypeName
+        )
+
+        #expect(result.contains("userCreated"))
+        #expect(result.contains("id")) // User has "id", so auto-selected
+    }
+
+    @Test("setArguments with mutation rootTypeName resolves argument types correctly")
+    func setArgumentsForMutation() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // First add createUser to get a document
+        let query = service.toggleField(
+            fieldName: "createUser",
+            parentPath: [],
+            schema: schema,
+            currentQuery: "",
+            rootTypeName: schema.mutationTypeName
+        )
+
+        // Now set an argument on createUser using mutation root type
+        let result = service.setArguments(
+            fieldName: "createUser",
+            parentPath: [],
+            arguments: ["name": "Alice"],
+            schema: schema,
+            currentQuery: query,
+            rootTypeName: schema.mutationTypeName
+        )
+
+        #expect(result.contains("createUser"))
+        #expect(result.contains("Alice"))
+    }
+
+    // MARK: - Preserved Selections Tests
+
+    @Test("preserveSelections stores child paths for a root operation")
+    func preserveSelectionsStoresChildPaths() {
+        let service = QueryASTService()
+        service.parse("{ user { id name } }")
+
+        service.preserveSelections(forRoot: "user")
+
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+        let preserved = service.preservedSelections["user"]
+        #expect(preserved?.contains("user") == true)
+        #expect(preserved?.contains("user/id") == true)
+        #expect(preserved?.contains("user/name") == true)
+    }
+
+    @Test("restoreSelections returns preserved paths and removes them")
+    func restoreSelectionsRoundTrip() {
+        let service = QueryASTService()
+        service.parse("{ user { id name } }")
+
+        service.preserveSelections(forRoot: "user")
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+
+        let restored = service.restoreSelections(forRoot: "user")
+        #expect(restored?.contains("user/id") == true)
+        #expect(restored?.contains("user/name") == true)
+        #expect(!service.hasPreservedSelections(forRoot: "user"))
+    }
+
+    @Test("Re-collapse overwrites preserved selections")
+    func preserveSelectionsOverwrites() {
+        let service = QueryASTService()
+        service.parse("{ user { id } }")
+
+        service.preserveSelections(forRoot: "user")
+        #expect(service.preservedSelections["user"]?.contains("user/id") == true)
+
+        // Now parse with different selection and re-preserve
+        service.parse("{ user { name email } }")
+        service.preserveSelections(forRoot: "user")
+
+        let preserved = service.preservedSelections["user"]!
+        #expect(!preserved.contains("user/id"))
+        #expect(preserved.contains("user/name"))
+        #expect(preserved.contains("user/email"))
+    }
+
+    @Test("clearPreservedSelections removes stored paths")
+    func clearPreservedSelections() {
+        let service = QueryASTService()
+        service.parse("{ user { id } }")
+
+        service.preserveSelections(forRoot: "user")
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+
+        service.clearPreservedSelections(forRoot: "user")
+        #expect(!service.hasPreservedSelections(forRoot: "user"))
+    }
+
+    @Test("hasPreservedSelections returns false for unknown root")
+    func hasPreservedSelectionsUnknown() {
+        let service = QueryASTService()
+        #expect(!service.hasPreservedSelections(forRoot: "nonexistent"))
+    }
+
+    @Test("Toggle mutation field without rootTypeName falls back to queryTypeName and fails gracefully")
+    func toggleMutationFieldWithoutRootTypeName() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Without rootTypeName, falls back to queryTypeName — createUser doesn't exist on Query
+        // So it should still add the field but without auto-sub-selection (can't resolve type)
+        let result = service.toggleField(
+            fieldName: "createUser",
+            parentPath: [],
+            schema: schema,
+            currentQuery: ""
+        )
+
+        // Should still add the field (just won't know it returns User)
+        #expect(result.contains("createUser"))
     }
 }
