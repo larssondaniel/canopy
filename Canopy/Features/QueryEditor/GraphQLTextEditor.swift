@@ -136,6 +136,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
         var completionPanel: CompletionPanel?
         private var completionDebouncer: DispatchWorkItem?
         private var lastInsertionWasSingleChar = false
+        private var lastCursorPosition: Int = 0
 
         init(_ parent: GraphQLTextEditor) {
             self.parent = parent
@@ -154,8 +155,24 @@ struct GraphQLTextEditor: NSViewRepresentable {
             parent.text = textView.string
             GraphQLSyntaxHighlighter.highlight(textView)
 
-            // Schedule auto-completion if the last change was a single character insertion
-            if lastInsertionWasSingleChar, parent.schema != nil {
+            guard lastInsertionWasSingleChar, parent.schema != nil else {
+                // Paste or programmatic change — dismiss panel
+                completionPanel?.dismiss()
+                return
+            }
+
+            let cursorOffset = textView.selectedRange().location
+            let prefix = CompletionEngine.extractPrefix(text: textView.string, cursorOffset: cursorOffset)
+
+            if let panel = completionPanel, panel.isVisible {
+                // Panel already showing — re-filter with new prefix
+                if prefix.isEmpty {
+                    panel.dismiss()
+                } else {
+                    scheduleCompletion(textView: textView)
+                }
+            } else if prefix.count >= 1 {
+                // Panel not showing — only auto-trigger after typing at least 1 character
                 scheduleCompletion(textView: textView)
             }
         }
@@ -245,24 +262,24 @@ struct GraphQLTextEditor: NSViewRepresentable {
         // MARK: - Selection Change
 
         func handleSelectionChange(textView: NSTextView) {
-            guard !isAcceptingCompletion else { return }
-            // If the panel is visible, re-filter on cursor movement
-            // (but dismiss if cursor moved out of prefix context)
-            if let panel = completionPanel, panel.isVisible {
-                let prefix = CompletionEngine.extractPrefix(text: textView.string, cursorOffset: textView.selectedRange().location)
-                if prefix.isEmpty && !textView.string.isEmpty {
-                    // Check if we're still in a valid completion context
-                    let items = CompletionEngine.completions(
-                        text: textView.string,
-                        cursorOffset: textView.selectedRange().location,
-                        schema: parent.schema
-                    )
-                    if items.isEmpty {
-                        panel.dismiss()
-                    } else {
-                        panel.updateItems(items)
-                    }
-                }
+            guard !isAcceptingCompletion, !isHandlingKeyEvent else { return }
+
+            let newPos = textView.selectedRange().location
+            defer { lastCursorPosition = newPos }
+
+            guard let panel = completionPanel, panel.isVisible else { return }
+
+            // If cursor jumped (click, arrow keys outside typing flow) — dismiss
+            let moved = abs(newPos - lastCursorPosition)
+            if moved > 1 {
+                panel.dismiss()
+                return
+            }
+
+            // Cursor moved by 0-1 (normal typing) — re-filter
+            let prefix = CompletionEngine.extractPrefix(text: textView.string, cursorOffset: newPos)
+            if prefix.isEmpty {
+                panel.dismiss()
             }
         }
 
@@ -275,6 +292,16 @@ struct GraphQLTextEditor: NSViewRepresentable {
 
             let cursorOffset = textView.selectedRange().location
             let text = textView.string
+            lastCursorPosition = cursorOffset
+
+            // Don't auto-show when there's no prefix (unless manual trigger)
+            if !manual {
+                let prefix = CompletionEngine.extractPrefix(text: text, cursorOffset: cursorOffset)
+                if prefix.isEmpty {
+                    completionPanel?.dismiss()
+                    return
+                }
+            }
 
             let items = CompletionEngine.completions(
                 text: text,
