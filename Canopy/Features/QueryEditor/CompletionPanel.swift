@@ -71,6 +71,7 @@ final class CompletionPanel: NSPanel {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.scrollerStyle = .overlay
+        scrollView.horizontalScrollElasticity = .none
         scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
     }
 
@@ -294,51 +295,59 @@ private final class CompletionCellView: NSView {
     }
 }
 
-// MARK: - Kind Badge (Xcode-style letter in colored rounded rect)
+// MARK: - Kind Badge (Xcode-style letter in colored rounded square)
 
 private final class KindBadgeView: NSView {
-    private let letterField = NSTextField(labelWithString: "")
+    private var letter: String = ""
+    private var badgeColor: NSColor = .systemGray
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
-        layer?.cornerRadius = 3
-
-        letterField.font = .systemFont(ofSize: 9, weight: .bold)
-        letterField.alignment = .center
-        letterField.drawsBackground = false
-        letterField.isBezeled = false
-        letterField.textColor = .white
-        letterField.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(letterField)
-
-        NSLayoutConstraint.activate([
-            letterField.centerXAnchor.constraint(equalTo: centerXAnchor),
-            letterField.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+
+        // Fill
+        badgeColor.setFill()
+        path.fill()
+
+        // Letter
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let size = (letter as NSString).size(withAttributes: attrs)
+        let point = NSPoint(
+            x: bounds.midX - size.width / 2,
+            y: bounds.midY - size.height / 2
+        )
+        (letter as NSString).draw(at: point, withAttributes: attrs)
+    }
+
     func configure(for item: CompletionItem) {
-        let (letter, color) = badgeStyle(for: item)
-        letterField.stringValue = letter
-        layer?.backgroundColor = color.cgColor
+        let (l, c) = badgeStyle(for: item)
+        letter = l
+        badgeColor = c
+        needsDisplay = true
     }
 
     private func badgeStyle(for item: CompletionItem) -> (String, NSColor) {
         switch item.kind {
         case .field:
             if item.label == "__typename" {
-                return ("T", .systemGray)
+                return ("T", NSColor(red: 0.55, green: 0.55, blue: 0.58, alpha: 1))
             }
-            return ("F", .systemCyan)
+            return ("F", NSColor(red: 0.33, green: 0.67, blue: 0.86, alpha: 1))
         case .argument:
-            return ("A", .systemPurple)
+            return ("A", NSColor(red: 0.63, green: 0.44, blue: 0.82, alpha: 1))
         case .keyword:
-            return ("K", .systemPink)
+            return ("K", NSColor(red: 0.82, green: 0.44, blue: 0.60, alpha: 1))
         }
     }
 }
