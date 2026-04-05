@@ -11,6 +11,7 @@ final class CompletionPanel: NSPanel {
     private static let maxVisibleRows = 10
     private static let panelWidth: CGFloat = 260
     private static let cornerRadius: CGFloat = 6
+    private static let panelPadding: CGFloat = 4
 
     // MARK: - Init
 
@@ -78,7 +79,7 @@ final class CompletionPanel: NSPanel {
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
         scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = .init(top: 0, left: 0, bottom: 0, right: 0)
+        scrollView.contentInsets = .init(top: Self.panelPadding, left: 0, bottom: Self.panelPadding, right: 0)
         tableView.sizeLastColumnToFit()
     }
 
@@ -96,7 +97,7 @@ final class CompletionPanel: NSPanel {
         }
 
         let visibleRows = min(items.count, Self.maxVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight // +8 for top/bottom insets
+        let height = CGFloat(visibleRows) * Self.rowHeight + Self.panelPadding * 2 // +8 for top/bottom insets
         let frame = NSRect(x: screenPoint.x, y: screenPoint.y - height, width: Self.panelWidth, height: height)
 
         let adjustedFrame = adjustFrameForScreen(frame)
@@ -124,7 +125,7 @@ final class CompletionPanel: NSPanel {
         }
 
         let visibleRows = min(newItems.count, Self.maxVisibleRows)
-        let height = CGFloat(visibleRows) * Self.rowHeight
+        let height = CGFloat(visibleRows) * Self.rowHeight + Self.panelPadding * 2
         var frame = self.frame
         let oldTop = frame.maxY
         frame.size.height = height
@@ -247,6 +248,11 @@ private final class CompletionCellView: NSView {
     private func setupViews() {
         selectionBackground.wantsLayer = true
         selectionBackground.layer?.cornerRadius = Self.selectionCornerRadius
+        selectionBackground.shadow = NSShadow()
+        selectionBackground.layer?.shadowColor = NSColor.black.withAlphaComponent(0.5).cgColor
+        selectionBackground.layer?.shadowOffset = CGSize(width: 0, height: -1)
+        selectionBackground.layer?.shadowRadius = 2
+        selectionBackground.layer?.shadowOpacity = 0
         selectionBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(selectionBackground)
 
@@ -261,10 +267,10 @@ private final class CompletionCellView: NSView {
         addSubview(labelField)
 
         NSLayoutConstraint.activate([
-            selectionBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
-            selectionBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
-            selectionBackground.topAnchor.constraint(equalTo: topAnchor),
-            selectionBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+            selectionBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            selectionBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            selectionBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            selectionBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
 
             badgeView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             badgeView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -285,8 +291,10 @@ private final class CompletionCellView: NSView {
 
         if isSelected {
             selectionBackground.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
+            selectionBackground.layer?.shadowOpacity = 0.4
         } else {
             selectionBackground.layer?.backgroundColor = NSColor.clear.cgColor
+            selectionBackground.layer?.shadowOpacity = 0
         }
 
         if item.isDeprecated {
