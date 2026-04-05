@@ -10,7 +10,7 @@ final class GraphQLNSTextView: NSTextView {
 
     private func drawCurrentLineHighlight(in rect: NSRect) {
         guard let layoutManager = layoutManager,
-              let textContainer = textContainer else { return }
+              textContainer != nil else { return }
 
         // Only highlight when there's an insertion point (no selection)
         let selectedRange = selectedRange()
@@ -18,9 +18,16 @@ final class GraphQLNSTextView: NSTextView {
 
         let cursorPosition = selectedRange.location
         let lineRange = (string as NSString).lineRange(for: NSRange(location: cursorPosition, length: 0))
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
 
-        var lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        var lineRect: NSRect
+        if lineRange.length == 0 {
+            // Cursor is on the extra line after trailing newline — use extraLineFragmentRect
+            lineRect = layoutManager.extraLineFragmentRect
+        } else {
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+            lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+        }
+
         lineRect.origin.x = 0
         lineRect.size.width = bounds.width
         lineRect.origin.y += textContainerOrigin.y

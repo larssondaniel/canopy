@@ -7,61 +7,68 @@ struct GraphQLTextEditor: NSViewRepresentable {
     private static let editorFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     private static let tabReplacement = "  " // 2 spaces
 
-    func makeNSView(context: Context) -> NSScrollView {
-        // Use factory method — it does critical internal setup for text rendering
+    func makeNSView(context: Context) -> NSView {
+        // Use factory for proper scroll view setup, then swap in our subclass
         let scrollView = NSTextView.scrollableTextView()
         guard let factoryTextView = scrollView.documentView as? NSTextView else { return scrollView }
 
-        // Create our custom subclass and swap it in
         let textView = GraphQLNSTextView(frame: factoryTextView.frame)
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineFragmentPadding = 8
-        textView.font = Self.editorFont
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = true
-        textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.delegate = context.coordinator
+        textView.font = Self.editorFont
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isContinuousSpellCheckingEnabled = false
         textView.isGrammarCheckingEnabled = false
-        textView.delegate = context.coordinator
         scrollView.documentView = textView
 
-        // Line number gutter
-        let rulerView = LineNumberRulerView(scrollView: scrollView, orientation: .verticalRuler)
-        rulerView.textView = textView
-        scrollView.verticalRulerView = rulerView
-        scrollView.hasVerticalRuler = true
-        scrollView.rulersVisible = true
-        rulerView.startObserving()
-
-        // Selection change observer for current-line highlight + gutter redraw
+        // Selection change observer for current-line highlight redraw
         let selectionToken = NotificationCenter.default.addObserver(
             forName: NSTextView.didChangeSelectionNotification,
             object: textView,
             queue: .main
         ) { _ in
             textView.needsDisplay = true
-            rulerView.needsDisplay = true
         }
         context.coordinator.observerTokens.append(selectionToken)
+
+        // Line number gutter — plain NSView beside the scroll view (CotEditor pattern)
+        let lineNumberView = LineNumberView()
+        lineNumberView.textView = textView
+        lineNumberView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        lineNumberView.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+
+        let stackView = NSStackView(views: [lineNumberView, scrollView])
+        stackView.spacing = 0
+        stackView.orientation = .horizontal
+        stackView.distribution = .fill
+        stackView.alignment = .top
+
+        // Start observing after views are in hierarchy
+        lineNumberView.startObserving()
 
         // Set initial text
         textView.string = text
 
-        return scrollView
+        return stackView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? GraphQLNSTextView else { return }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let stackView = nsView as? NSStackView,
+              let scrollView = stackView.arrangedSubviews.last as? NSScrollView,
+              let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
 
         guard textView.string != text else { return }
@@ -88,7 +95,6 @@ struct GraphQLTextEditor: NSViewRepresentable {
         }
 
         textView.needsDisplay = true
-        scrollView.verticalRulerView?.needsDisplay = true
     }
 
     func makeCoordinator() -> Coordinator {
