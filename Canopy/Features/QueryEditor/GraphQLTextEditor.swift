@@ -8,19 +8,19 @@ struct GraphQLTextEditor: NSViewRepresentable {
     private static let tabReplacement = "  " // 2 spaces
 
     func makeNSView(context: Context) -> NSScrollView {
-        let textView = GraphQLNSTextView()
-        let textContainer = NSTextContainer()
-        let layoutManager = NSLayoutManager()
         let textStorage = NSTextStorage()
-
+        let layoutManager = NSLayoutManager()
         textStorage.addLayoutManager(layoutManager)
-        layoutManager.addTextContainer(textContainer)
 
+        let textContainer = NSTextContainer(containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         textContainer.widthTracksTextView = true
         textContainer.lineFragmentPadding = 8
+        layoutManager.addTextContainer(textContainer)
 
-        textView.replaceTextContainer(textContainer)
+        let textView = GraphQLNSTextView(frame: .zero, textContainer: textContainer)
         textView.font = Self.editorFont
+        textView.textColor = .textColor
+        textView.backgroundColor = .textBackgroundColor
         textView.isRichText = false
         textView.allowsUndo = true
         textView.isEditable = true
@@ -112,6 +112,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: GraphQLTextEditor
         var isUpdating = false
+        var isHandlingKeyEvent = false
         var observerTokens: [Any] = []
 
         init(_ parent: GraphQLTextEditor) {
@@ -133,6 +134,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
             replacementString: String?
         ) -> Bool {
             guard let replacement = replacementString else { return true }
+            guard !isHandlingKeyEvent else { return true }
 
             // Tab key → insert 2 spaces
             if replacement == "\t" {
@@ -161,6 +163,9 @@ struct GraphQLTextEditor: NSViewRepresentable {
         // MARK: - Tab Handling
 
         private func handleTab(textView: NSTextView, affectedRange: NSRange) {
+            isHandlingKeyEvent = true
+            defer { isHandlingKeyEvent = false }
+
             let selectedRange = textView.selectedRange()
             let string = textView.string as NSString
 
@@ -191,6 +196,9 @@ struct GraphQLTextEditor: NSViewRepresentable {
         }
 
         private func handleBackTab(textView: NSTextView) {
+            isHandlingKeyEvent = true
+            defer { isHandlingKeyEvent = false }
+
             let selectedRange = textView.selectedRange()
             let string = textView.string as NSString
             let lineRange = string.lineRange(for: selectedRange)
@@ -246,6 +254,8 @@ struct GraphQLTextEditor: NSViewRepresentable {
             }
 
             let insertion = "\n" + newIndent
+            isHandlingKeyEvent = true
+            defer { isHandlingKeyEvent = false }
             textView.insertText(insertion, replacementRange: affectedRange)
         }
     }
