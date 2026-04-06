@@ -61,4 +61,27 @@ enum GraphQLSyntaxHighlighter {
             }
         }
     }
+
+    /// Remove error underline temporary attributes from the entire text range.
+    static func clearErrors(_ textView: NSTextView) {
+        guard let layoutManager = textView.layoutManager else { return }
+        let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+        guard fullRange.length > 0 else { return }
+        layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: fullRange)
+        layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: fullRange)
+    }
+
+    /// Apply error underline temporary attributes for the given ranges.
+    static func applyErrors(_ errors: [QueryValidator.ValidationError], to textView: NSTextView) {
+        guard let layoutManager = textView.layoutManager else { return }
+        let textLength = (textView.string as NSString).length
+        let underlineStyle = NSUnderlineStyle.patternDot.union(.single)
+
+        for error in errors {
+            guard error.range.location >= 0,
+                  NSMaxRange(error.range) <= textLength else { continue }
+            layoutManager.addTemporaryAttribute(.underlineStyle, value: underlineStyle.rawValue, forCharacterRange: error.range)
+            layoutManager.addTemporaryAttribute(.underlineColor, value: NSColor.systemRed, forCharacterRange: error.range)
+        }
+    }
 }

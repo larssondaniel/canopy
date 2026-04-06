@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import GraphQL
 
 struct GraphQLTextEditor: NSViewRepresentable {
     @Binding var text: String
@@ -40,6 +41,14 @@ struct GraphQLTextEditor: NSViewRepresentable {
             coordinator?.triggerCompletion(textView: textView, manual: true)
         }
 
+        // Wire up error hover support
+        textView.errorProvider = { [weak coordinator = context.coordinator] in
+            coordinator?.currentErrors ?? []
+        }
+        textView.isCompletionVisible = { [weak coordinator = context.coordinator] in
+            coordinator?.completionPanel?.isVisible ?? false
+        }
+
         // Selection change observer for current-line highlight redraw
         let selectionToken = NotificationCenter.default.addObserver(
             forName: NSTextView.didChangeSelectionNotification,
@@ -52,14 +61,15 @@ struct GraphQLTextEditor: NSViewRepresentable {
         }
         context.coordinator.observerTokens.append(selectionToken)
 
-        // Dismiss completion on scroll
+        // Dismiss completion and error tooltip on scroll
         if let clipView = scrollView.contentView as? NSClipView {
             let scrollToken = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
                 object: clipView,
                 queue: .main
-            ) { [weak coordinator = context.coordinator] _ in
+            ) { [weak coordinator = context.coordinator, weak textView] _ in
                 coordinator?.completionPanel?.dismiss()
+                (textView as? GraphQLNSTextView)?.dismissErrorPopoverOnScroll()
             }
             context.coordinator.observerTokens.append(scrollToken)
         }
@@ -82,6 +92,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
         // Set initial text and apply syntax highlighting
         textView.string = text
         GraphQLSyntaxHighlighter.highlight(textView)
+        context.coordinator.runValidation(textView: textView)
 
         return stackView
     }
@@ -92,30 +103,48 @@ struct GraphQLTextEditor: NSViewRepresentable {
               let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.parent = self
 
-        guard textView.string != text else { return }
-
-        context.coordinator.isUpdating = true
-        defer { context.coordinator.isUpdating = false }
-
-        let savedRanges = textView.selectedRanges
-        let newLength = (text as NSString).length
-
-        textView.undoManager?.disableUndoRegistration()
-        textView.string = text
-        textView.undoManager?.enableUndoRegistration()
-
-        // Clamp saved selection ranges to new text length
-        let clampedRanges = savedRanges.map { rangeValue -> NSValue in
-            let range = rangeValue.rangeValue
-            let clampedLocation = min(range.location, newLength)
-            let clampedLength = min(range.length, newLength - clampedLocation)
-            return NSValue(range: NSRange(location: clampedLocation, length: clampedLength))
+        // Detect schema changes — re-validate even if text is the same
+        let currentEndpoint = schema.map { _ in
+            // Use the schema's query type name as a lightweight identity
+            schema?.queryTypeName ?? ""
         }
-        if !clampedRanges.isEmpty {
-            textView.selectedRanges = clampedRanges
+        let schemaChanged = currentEndpoint != context.coordinator.lastSchemaEndpoint
+        if schemaChanged {
+            context.coordinator.lastSchemaEndpoint = currentEndpoint
         }
 
-        GraphQLSyntaxHighlighter.highlight(textView)
+        let textChanged = textView.string != text
+
+        guard textChanged || schemaChanged else { return }
+
+        if textChanged {
+            context.coordinator.isUpdating = true
+            defer { context.coordinator.isUpdating = false }
+
+            let savedRanges = textView.selectedRanges
+            let newLength = (text as NSString).length
+
+            textView.undoManager?.disableUndoRegistration()
+            textView.string = text
+            textView.undoManager?.enableUndoRegistration()
+
+            // Clamp saved selection ranges to new text length
+            let clampedRanges = savedRanges.map { rangeValue -> NSValue in
+                let range = rangeValue.rangeValue
+                let clampedLocation = min(range.location, newLength)
+                let clampedLength = min(range.length, newLength - clampedLocation)
+                return NSValue(range: NSRange(location: clampedLocation, length: clampedLength))
+            }
+            if !clampedRanges.isEmpty {
+                textView.selectedRanges = clampedRanges
+            }
+
+            GraphQLSyntaxHighlighter.highlight(textView)
+        }
+
+        // Clear and re-run validation on text or schema change
+        GraphQLSyntaxHighlighter.clearErrors(textView)
+        context.coordinator.runValidation(textView: textView)
         textView.needsDisplay = true
     }
 
@@ -138,6 +167,11 @@ struct GraphQLTextEditor: NSViewRepresentable {
         private var lastInsertionWasSingleChar = false
         private var lastCursorPosition: Int = 0
 
+        // Validation state
+        private var validationDebouncer: DispatchWorkItem?
+        var currentErrors: [QueryValidator.ValidationError] = []
+        var lastSchemaEndpoint: String?
+
         init(_ parent: GraphQLTextEditor) {
             self.parent = parent
         }
@@ -146,6 +180,7 @@ struct GraphQLTextEditor: NSViewRepresentable {
             observerTokens.forEach { NotificationCenter.default.removeObserver($0) }
             completionPanel?.dismiss()
             completionDebouncer?.cancel()
+            validationDebouncer?.cancel()
         }
 
         // MARK: - Text Change
@@ -154,6 +189,10 @@ struct GraphQLTextEditor: NSViewRepresentable {
             guard !isUpdating, let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
             GraphQLSyntaxHighlighter.highlight(textView)
+
+            // Clear error underlines immediately, re-validate after debounce
+            GraphQLSyntaxHighlighter.clearErrors(textView)
+            scheduleValidation(textView: textView)
 
             guard lastInsertionWasSingleChar, parent.schema != nil else {
                 // Paste or programmatic change — dismiss panel
@@ -381,6 +420,48 @@ struct GraphQLTextEditor: NSViewRepresentable {
             }
             completionDebouncer = work
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(150), execute: work)
+        }
+
+        // MARK: - Validation
+
+        private func scheduleValidation(textView: NSTextView) {
+            validationDebouncer?.cancel()
+
+            let work = DispatchWorkItem { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.runValidation(textView: textView)
+            }
+            validationDebouncer = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300), execute: work)
+        }
+
+        func runValidation(textView: NSTextView) {
+            guard let schema = parent.schema else {
+                currentErrors = []
+                return
+            }
+
+            let source = textView.string
+            guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                currentErrors = []
+                return
+            }
+
+            // Size guard — skip validation for very large queries
+            guard (source as NSString).length <= 50_000 else {
+                currentErrors = []
+                return
+            }
+
+            guard let document = try? GraphQL.parse(source: source) else {
+                // Parse failed — syntax error. Clear errors (already cleared on keystroke).
+                currentErrors = []
+                return
+            }
+
+            let errors = QueryValidator.validate(document: document, schema: schema, source: source)
+            currentErrors = errors
+            GraphQLSyntaxHighlighter.applyErrors(errors, to: textView)
         }
 
         // MARK: - Completion Acceptance
