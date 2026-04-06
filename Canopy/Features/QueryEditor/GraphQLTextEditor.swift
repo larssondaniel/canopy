@@ -214,6 +214,43 @@ struct GraphQLTextEditor: NSViewRepresentable {
                 return false
             }
 
+            // Auto-close braces and parens
+            if (replacement == "{" || replacement == "(") && !isAcceptingCompletion {
+                if !CompletionEngine.isInsideCommentOrString(text: textView.string, cursorOffset: affectedCharRange.location) {
+                    handleAutoClose(textView: textView, opening: replacement, affectedRange: affectedCharRange)
+                    return false
+                }
+            }
+
+            // Closing characters: skip-over and auto-dedent (only with no selection)
+            if (replacement == "}" || replacement == ")") && affectedCharRange.length == 0 {
+                if !CompletionEngine.isInsideCommentOrString(text: textView.string, cursorOffset: affectedCharRange.location) {
+                    let string = textView.string as NSString
+
+                    // Skip-over: if next char matches, just move cursor past it
+                    if affectedCharRange.location < string.length {
+                        let nextChar = Character(UnicodeScalar(string.character(at: affectedCharRange.location))!)
+                        if String(nextChar) == replacement {
+                            completionPanel?.dismiss()
+                            textView.setSelectedRange(NSRange(location: affectedCharRange.location + 1, length: 0))
+                            return false
+                        }
+                    }
+
+                    // Auto-dedent: } on whitespace-only line
+                    if replacement == "}" {
+                        let lineRange = string.lineRange(for: NSRange(location: affectedCharRange.location, length: 0))
+                        let textBeforeCursor = string.substring(
+                            with: NSRange(location: lineRange.location, length: affectedCharRange.location - lineRange.location)
+                        )
+                        if !textBeforeCursor.isEmpty && textBeforeCursor.allSatisfy({ $0 == " " }) {
+                            handleAutoDedent(textView: textView, affectedRange: affectedCharRange, lineStart: lineRange.location, currentIndent: textBeforeCursor)
+                            return false
+                        }
+                    }
+                }
+            }
+
             // Dismiss panel on non-identifier characters when panel is visible
             if let panel = completionPanel, panel.isVisible {
                 let isIdentifierChar = replacement.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
@@ -256,6 +293,14 @@ struct GraphQLTextEditor: NSViewRepresentable {
                 handleBackTab(textView: textView)
                 return true
             }
+
+            // Backspace → pair-delete
+            if commandSelector == #selector(NSResponder.deleteBackward(_:)) {
+                if handlePairDelete(textView: textView) {
+                    return true
+                }
+            }
+
             return false
         }
 
@@ -499,12 +544,47 @@ struct GraphQLTextEditor: NSViewRepresentable {
             let baseIndent = String(textBeforeCursor.prefix(while: { $0 == " " }))
             let lastNonWS = textBeforeCursor.last(where: { !$0.isWhitespace })
 
+            // Split-brace/paren expansion: cursor between matched pair on the same line
+            if let charBefore = lastNonWS, charBefore == "{" || charBefore == "(" {
+                let expectedClosing: Character = charBefore == "{" ? "}" : ")"
+
+                // Scan forward past whitespace (but not newline) to find closing char
+                var closingOffset = cursorPosition
+                while closingOffset < string.length {
+                    let ch = Character(UnicodeScalar(string.character(at: closingOffset))!)
+                    if ch == " " || ch == "\t" {
+                        closingOffset += 1
+                    } else {
+                        break
+                    }
+                }
+
+                if closingOffset < string.length {
+                    let closingChar = Character(UnicodeScalar(string.character(at: closingOffset))!)
+                    if closingChar == expectedClosing {
+                        let innerIndent = baseIndent + GraphQLTextEditor.tabReplacement
+                        let insertion = "\n" + innerIndent + "\n" + baseIndent
+                        let replaceRange = NSRange(location: cursorPosition, length: closingOffset - cursorPosition)
+
+                        isHandlingKeyEvent = true
+                        defer { isHandlingKeyEvent = false }
+                        textView.undoManager?.beginUndoGrouping()
+                        textView.insertText(insertion, replacementRange: replaceRange)
+                        textView.undoManager?.endUndoGrouping()
+
+                        let newCursorPos = cursorPosition + 1 + innerIndent.count
+                        textView.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+                        return
+                    }
+                }
+            }
+
+            // Regular return handling
             let newIndent: String
-            if lastNonWS == "{" {
+            if lastNonWS == "{" || lastNonWS == "(" {
                 newIndent = baseIndent + GraphQLTextEditor.tabReplacement
             } else if lastNonWS == "}" {
-                let reduced = max(0, baseIndent.count - GraphQLTextEditor.tabReplacement.count)
-                newIndent = String(repeating: " ", count: reduced)
+                newIndent = baseIndent
             } else {
                 newIndent = baseIndent
             }
@@ -513,6 +593,96 @@ struct GraphQLTextEditor: NSViewRepresentable {
             isHandlingKeyEvent = true
             defer { isHandlingKeyEvent = false }
             textView.insertText(insertion, replacementRange: affectedRange)
+        }
+
+        // MARK: - Auto-Close
+
+        private func handleAutoClose(textView: NSTextView, opening: String, affectedRange: NSRange) {
+            let closing = opening == "{" ? "}" : ")"
+
+            lastInsertionWasSingleChar = false
+            isHandlingKeyEvent = true
+            defer { isHandlingKeyEvent = false }
+
+            if affectedRange.length > 0 {
+                // Selection wrapping: {selection} or (selection)
+                let string = textView.string as NSString
+                let selectedText = string.substring(with: affectedRange)
+                let wrapped = opening + selectedText + closing
+                textView.insertText(wrapped, replacementRange: affectedRange)
+                let newPos = affectedRange.location + wrapped.count
+                textView.setSelectedRange(NSRange(location: newPos, length: 0))
+            } else {
+                // No selection: insert pair with cursor between
+                let pair = opening + closing
+                textView.insertText(pair, replacementRange: affectedRange)
+                let newPos = affectedRange.location + 1
+                textView.setSelectedRange(NSRange(location: newPos, length: 0))
+            }
+        }
+
+        // MARK: - Auto-Dedent
+
+        private func handleAutoDedent(textView: NSTextView, affectedRange: NSRange, lineStart: Int, currentIndent: String) {
+            let tabSize = GraphQLTextEditor.tabReplacement.count
+            let reducedCount = max(0, currentIndent.count - tabSize)
+            let newIndent = String(repeating: " ", count: reducedCount)
+
+            isHandlingKeyEvent = true
+            defer { isHandlingKeyEvent = false }
+
+            // Replace the whitespace before cursor with reduced indent + }
+            let replaceRange = NSRange(location: lineStart, length: affectedRange.location - lineStart)
+            textView.insertText(newIndent + "}", replacementRange: replaceRange)
+        }
+
+        // MARK: - Pair Delete
+
+        private func handlePairDelete(textView: NSTextView) -> Bool {
+            let selectedRange = textView.selectedRange()
+            guard selectedRange.length == 0 else { return false }
+
+            let cursorPos = selectedRange.location
+            let string = textView.string as NSString
+
+            guard cursorPos > 0, cursorPos < string.length else { return false }
+
+            if CompletionEngine.isInsideCommentOrString(text: textView.string, cursorOffset: cursorPos) {
+                return false
+            }
+
+            let charBefore = Character(UnicodeScalar(string.character(at: cursorPos - 1))!)
+            let charAfter = Character(UnicodeScalar(string.character(at: cursorPos))!)
+
+            // Direct pair: {} or ()
+            if (charBefore == "{" && charAfter == "}") || (charBefore == "(" && charAfter == ")") {
+                isHandlingKeyEvent = true
+                defer { isHandlingKeyEvent = false }
+                let deleteRange = NSRange(location: cursorPos - 1, length: 2)
+                textView.insertText("", replacementRange: deleteRange)
+                return true
+            }
+
+            // Spaced pair: cursor right after { or (, scan forward through whitespace for matching close
+            if charBefore == "{" || charBefore == "(" {
+                let expectedClose: Character = charBefore == "{" ? "}" : ")"
+                var scanPos = cursorPos
+                while scanPos < string.length {
+                    let c = Character(UnicodeScalar(string.character(at: scanPos))!)
+                    if c == expectedClose {
+                        isHandlingKeyEvent = true
+                        defer { isHandlingKeyEvent = false }
+                        let deleteRange = NSRange(location: cursorPos - 1, length: scanPos - cursorPos + 2)
+                        textView.insertText("", replacementRange: deleteRange)
+                        return true
+                    } else if c != " " {
+                        break
+                    }
+                    scanPos += 1
+                }
+            }
+
+            return false
         }
     }
 }
