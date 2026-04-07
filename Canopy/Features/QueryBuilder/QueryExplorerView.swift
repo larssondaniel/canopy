@@ -42,6 +42,8 @@ struct QueryExplorerView: View {
     @State private var inspectedField: InspectedFieldInfo?
     /// Snapshot of expand state before search began, for restoring on clear.
     @State private var preSearchExpandState: (paths: Set<String>, sections: Set<OperationSegment>)?
+    /// Currently focused row for keyboard navigation.
+    @State private var focusedRow: OutlineRowID?
 
     var body: some View {
         Group {
@@ -265,6 +267,17 @@ struct QueryExplorerView: View {
             .popover(item: $inspectedField) { info in
                 FieldInspectPopover(field: info.field, resolvedTypeName: info.resolvedTypeName)
             }
+            .outlineKeyboardNavigation(
+                focusedRow: $focusedRow,
+                expandedPaths: $expandedPaths,
+                expandedSections: $expandedSections,
+                searchText: $searchText,
+                visibleRows: computeVisibleRows(segments: segments),
+                toggleRow: { row in
+                    handleRowToggle(row, schema: schema)
+                }
+            )
+            .focusable()
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -300,6 +313,80 @@ struct QueryExplorerView: View {
         guard !debouncedSearchText.isEmpty else { return 0 }
         let query = debouncedSearchText.lowercased()
         return rootType.fields?.filter { $0.name.lowercased().contains(query) }.count ?? 0
+    }
+
+    // MARK: - Keyboard Navigation
+
+    /// Build the flat list of visible row IDs for keyboard navigation.
+    private func computeVisibleRows(segments: [(segment: OperationSegment, typeName: String, type: GraphQLFullType)]) -> [OutlineRowID] {
+        var rows: [OutlineRowID] = []
+        let hasSearch = !debouncedSearchText.isEmpty
+
+        for item in segments {
+            let matchCount = searchMatchCount(for: item.type)
+            let isVisible = !hasSearch || matchCount > 0
+            guard isVisible else { continue }
+
+            rows.append(.section(item.segment))
+
+            let isSectionExpanded = hasSearch ? (matchCount > 0) : expandedSections.contains(item.segment)
+            guard isSectionExpanded else { continue }
+
+            let allFields = item.type.fields ?? []
+            let fields: [GraphQLField]
+            if hasSearch {
+                let query = debouncedSearchText.lowercased()
+                fields = allFields.filter { $0.name.lowercased().contains(query) }
+            } else {
+                fields = allFields
+            }
+
+            for field in fields {
+                rows.append(.operation(item.segment, field.name))
+                // If this operation is expanded, add its visible sub-fields
+                // (only first level for now — deeper nesting handled by tree)
+            }
+        }
+        return rows
+    }
+
+    /// Handle space/toggle on a focused row.
+    private func handleRowToggle(_ row: OutlineRowID, schema: GraphQLSchema) {
+        switch row {
+        case .section(let segment):
+            withAnimation {
+                if expandedSections.contains(segment) {
+                    expandedSections.remove(segment)
+                } else {
+                    expandedSections.insert(segment)
+                }
+            }
+        case .operation(_, let fieldName):
+            withAnimation {
+                if expandedPaths.contains(fieldName) {
+                    expandedPaths.remove(fieldName)
+                } else {
+                    expandedPaths.insert(fieldName)
+                }
+            }
+        case .field(let pathKey):
+            // Toggle the field checkbox via the toggle action
+            let components = pathKey.split(separator: "/").map(String.init)
+            guard let fieldName = components.last else { return }
+            let parentPath = Array(components.dropLast())
+            // Find the segment for this field — check which segment's paths contain a prefix
+            for (seg, paths) in astService.selectedPaths {
+                let root = components.first ?? ""
+                if paths.contains(root) || (astService.selectedPaths[seg] ?? []).isEmpty == false {
+                    // This is a simplification — in practice, fields are always under expanded operations
+                    // which belong to a known segment
+                    break
+                }
+                _ = seg // suppress unused warning
+            }
+            // Field toggles are handled by the row views directly
+            break
+        }
     }
 }
 
