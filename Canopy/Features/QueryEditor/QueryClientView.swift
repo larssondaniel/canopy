@@ -3,22 +3,41 @@ import SwiftUI
 struct QueryClientView: View {
     @Bindable var tab: QueryTab
     var activeEnvironment: AppEnvironment?
+    var astService: QueryASTService
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
     private let client = GraphQLClient()
 
     var body: some View {
         HSplitView {
-            RequestPane(tab: tab, activeEnvironment: activeEnvironment, onRun: run, onCancel: cancel)
+            RequestPane(tab: tab, activeEnvironment: activeEnvironment, onRun: { run() }, onCancel: cancel)
                 .frame(minWidth: 300)
             ResponsePane(tab: tab)
                 .frame(minWidth: 300)
         }
+        .environment(\.runOperationAction, RunOperationAction { segment in
+            run(segment: segment)
+        })
     }
 
-    private func run() {
+    private func run(segment: OperationSegment? = nil) {
         tab.currentTask?.cancel()
         tab.currentTask = Task {
-            await client.send(tab: tab, environmentVariables: activeEnvironment?.variables)
+            // Determine operationName for multi-operation documents
+            let operationName: String?
+            if let doc = astService.currentDocument,
+               doc.definitions.count > 1 {
+                // Multiple operations — use the specified segment or the active one
+                let targetSegment = segment ?? astService.activeSegment ?? .queries
+                switch targetSegment {
+                case .queries: operationName = "Query"
+                case .mutations: operationName = "Mutation"
+                case .subscriptions: operationName = "Subscription"
+                }
+            } else {
+                operationName = nil
+            }
+
+            await client.send(tab: tab, environmentVariables: activeEnvironment?.variables, operationName: operationName)
 
             // After successful query, update the active endpoint and auto-fetch schema
             if tab.lastError == nil, tab.responseStatusCode != nil {
@@ -35,7 +54,6 @@ struct QueryClientView: View {
                     auth: tab.authConfig.toAuthConfiguration(),
                     headers: tab.headers
                 )
-                // fetchSchema skips if already loaded, normalizes internally
                 schemaStore.fetchSchema(endpoint: endpoint)
             }
         }

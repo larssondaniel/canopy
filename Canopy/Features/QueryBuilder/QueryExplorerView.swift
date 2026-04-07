@@ -16,10 +16,16 @@ struct InspectFieldAction {
     let inspect: @MainActor (_ field: GraphQLField, _ resolvedTypeName: String) -> Void
 }
 
+/// Environment key for running a specific operation from the sidebar.
+struct RunOperationAction {
+    let run: @MainActor (_ segment: OperationSegment) -> Void
+}
+
 extension EnvironmentValues {
     @Entry var toggleFieldAction: ToggleFieldAction? = nil
     @Entry var setArgumentAction: SetArgumentAction? = nil
     @Entry var inspectFieldAction: InspectFieldAction? = nil
+    @Entry var runOperationAction: RunOperationAction? = nil
 }
 
 /// Visual query builder tree with collapsible operation sections and click-to-toggle
@@ -398,6 +404,7 @@ private struct SectionHeaderRow: View {
     let matchCount: Int
     let isSearching: Bool
     let hasSelectedFields: Bool
+    @SwiftUI.Environment(\.runOperationAction) private var runAction
 
     var body: some View {
         HStack(spacing: 4) {
@@ -419,6 +426,19 @@ private struct SectionHeaderRow: View {
             .foregroundStyle(.secondary)
 
             Spacer()
+
+            if hasSelectedFields, let runAction {
+                Button {
+                    runAction.run(segment)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.caption2)
+                        .foregroundStyle(segment.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help("Run \(segment.rawValue.dropLast())") // "Run Query", "Run Mutation", etc.
+                .disabled(segment == .subscriptions) // Subscriptions not yet supported
+            }
         }
         .font(.callout)
         .lineLimit(1)
