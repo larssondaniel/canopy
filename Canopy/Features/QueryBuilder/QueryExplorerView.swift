@@ -78,6 +78,22 @@ struct QueryExplorerView: View {
                 }
             }
         }
+        .onChange(of: expandedSections) { _, newValue in
+            if let endpoint = schemaStore.activeEndpoint {
+                ExpandStateStore.saveExpandedSections(newValue, for: endpoint)
+            }
+        }
+        .onChange(of: expandedPaths) { _, newValue in
+            if let endpoint = schemaStore.activeEndpoint {
+                ExpandStateStore.saveExpandedPaths(newValue, for: endpoint)
+            }
+        }
+        .task(id: schemaStore.activeEndpoint) {
+            // Load persisted expand state when endpoint changes
+            guard let endpoint = schemaStore.activeEndpoint else { return }
+            expandedSections = ExpandStateStore.loadExpandedSections(for: endpoint)
+            expandedPaths = ExpandStateStore.loadExpandedPaths(for: endpoint)
+        }
     }
 
     // MARK: - Explorer Content
