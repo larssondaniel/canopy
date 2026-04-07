@@ -8,7 +8,9 @@ struct QueryASTServiceTests {
 
     // MARK: - Test Schema Helper
 
-    /// Build a minimal test schema with Query { user(id: ID!): User, posts: [Post] }
+    /// Build a minimal test schema with Query { user(id: ID!): User, posts: [Post], version: String }
+    /// Mutation { createUser(name: String): User }
+    /// Subscription { userCreated: User }
     /// User { id: ID!, name: String, email: String, profile: Profile }
     /// Profile { bio: String, avatar: String }
     /// Post { id: ID!, title: String, author: User }
@@ -104,6 +106,11 @@ struct QueryASTServiceTests {
         let data = json.data(using: .utf8)!
         let response = try! JSONDecoder().decode(IntrospectionResponse.self, from: data)
         return GraphQLSchema.from(response.data.__schema)
+    }
+
+    /// Helper to get selectedPaths for a specific segment (defaults to .queries)
+    private func paths(_ service: QueryASTService, _ segment: OperationSegment = .queries) -> Set<String> {
+        service.selectedPaths[segment] ?? []
     }
 
     // MARK: - Parse Tests
@@ -243,7 +250,7 @@ struct QueryASTServiceTests {
         #expect(result.contains("version"))
     }
 
-    @Test("Round-trip: parse → print produces equivalent query")
+    @Test("Round-trip: parse -> print produces equivalent query")
     func roundTrip() {
         let service = QueryASTService()
         let schema = makeTestSchema()
@@ -287,8 +294,6 @@ struct QueryASTServiceTests {
     func circularTypeDefaultSubSelection() {
         let service = QueryASTService()
         let schema = makeTestSchema()
-        // Post.author returns User, User has no circular reference at the immediate level
-        // but author → User → profile → Profile (no circular)
         service.parse("{ posts { id } }")
 
         let result = service.toggleField(
@@ -298,7 +303,6 @@ struct QueryASTServiceTests {
             currentQuery: "{ posts { id } }"
         )
 
-        // Should add author with default sub-selection (id, since User has id)
         #expect(result.contains("author"))
         #expect(result.contains("id"))
     }
@@ -318,6 +322,8 @@ struct QueryASTServiceTests {
         )
 
         #expect(result.contains("version"))
+        // Should produce a named query operation
+        #expect(result.contains("query Query"))
 
         // Verify it parses correctly
         service.parse(result)
@@ -332,20 +338,21 @@ struct QueryASTServiceTests {
         let service = QueryASTService()
         service.parse("{ user { id name } }")
 
-        #expect(service.selectedPaths.contains("user"))
-        #expect(service.selectedPaths.contains("user/id"))
-        #expect(service.selectedPaths.contains("user/name"))
-        #expect(!service.selectedPaths.contains("user/email"))
+        let qp = paths(service)
+        #expect(qp.contains("user"))
+        #expect(qp.contains("user/id"))
+        #expect(qp.contains("user/name"))
+        #expect(!qp.contains("user/email"))
     }
 
     @Test("selectedPaths cleared on empty query")
     func selectedPathsCleared() {
         let service = QueryASTService()
         service.parse("{ user { id } }")
-        #expect(!service.selectedPaths.isEmpty)
+        #expect(!paths(service).isEmpty)
 
         service.parse("")
-        #expect(service.selectedPaths.isEmpty)
+        #expect(paths(service).isEmpty)
     }
 
     @Test("selectedPaths updated after toggleField")
@@ -356,9 +363,10 @@ struct QueryASTServiceTests {
 
         _ = service.toggleField(fieldName: "name", parentPath: ["user"], schema: schema, currentQuery: "{ user { id } }")
 
-        #expect(service.selectedPaths.contains("user/name"))
-        #expect(service.selectedPaths.contains("user/id"))
-        #expect(service.selectedPaths.contains("user"))
+        let qp = paths(service)
+        #expect(qp.contains("user/name"))
+        #expect(qp.contains("user/id"))
+        #expect(qp.contains("user"))
     }
 
     @Test("selectedPaths consistent with isFieldSelected")
@@ -366,18 +374,18 @@ struct QueryASTServiceTests {
         let service = QueryASTService()
         service.parse("{ user { id name } posts { id title } }")
 
-        // Verify selectedPaths and isFieldSelected agree
+        let qp = paths(service)
         #expect(service.isFieldSelected(fieldName: "user", parentPath: []))
-        #expect(service.selectedPaths.contains("user"))
+        #expect(qp.contains("user"))
 
         #expect(service.isFieldSelected(fieldName: "id", parentPath: ["user"]))
-        #expect(service.selectedPaths.contains("user/id"))
+        #expect(qp.contains("user/id"))
 
         #expect(service.isFieldSelected(fieldName: "posts", parentPath: []))
-        #expect(service.selectedPaths.contains("posts"))
+        #expect(qp.contains("posts"))
 
         #expect(!service.isFieldSelected(fieldName: "email", parentPath: ["user"]))
-        #expect(!service.selectedPaths.contains("user/email"))
+        #expect(!qp.contains("user/email"))
     }
 
     @Test("Multiple toggle operations maintain consistency")
@@ -474,7 +482,6 @@ struct QueryASTServiceTests {
             currentQuery: "{ user(id: \"123\") { id } }"
         )
 
-        // Should not contain the argument
         #expect(!result.contains("123"))
         #expect(result.contains("user"))
         #expect(result.contains("id"))
@@ -485,10 +492,10 @@ struct QueryASTServiceTests {
         let service = QueryASTService()
         service.parse("{ user(id: \"abc\") { name } }")
 
-        #expect(service.argumentValues["user"]?["id"] == "abc")
+        #expect(service.argumentValues[.queries]?["user"]?["id"] == "abc")
     }
 
-    @Test("argumentValues round-trip: set → print → parse → cache matches")
+    @Test("argumentValues round-trip: set -> print -> parse -> cache matches")
     func argumentValuesRoundTrip() {
         let service = QueryASTService()
         let schema = makeTestSchema()
@@ -504,48 +511,48 @@ struct QueryASTServiceTests {
 
         // Re-parse the result
         service.parse(result)
-        #expect(service.argumentValues["user"]?["id"] == "xyz")
+        #expect(service.argumentValues[.queries]?["user"]?["id"] == "xyz")
     }
 
     // MARK: - Mutation/Subscription Toggle Tests
 
-    @Test("Toggle mutation field on with rootTypeName resolves correctly")
+    @Test("Toggle mutation field on with segment resolves correctly")
     func toggleMutationField() {
         let service = QueryASTService()
         let schema = makeTestSchema()
 
-        // Toggle createUser (a mutation field that returns User — should auto-select "id")
         let result = service.toggleField(
             fieldName: "createUser",
             parentPath: [],
             schema: schema,
             currentQuery: "",
-            rootTypeName: schema.mutationTypeName
+            segment: .mutations
         )
 
         #expect(result.contains("createUser"))
         #expect(result.contains("id")) // User has "id", so auto-selected
+        #expect(result.contains("mutation Mutation"))
     }
 
-    @Test("Toggle subscription field on with rootTypeName resolves correctly")
+    @Test("Toggle subscription field on with segment resolves correctly")
     func toggleSubscriptionField() {
         let service = QueryASTService()
         let schema = makeTestSchema()
 
-        // Toggle userCreated (a subscription field that returns User)
         let result = service.toggleField(
             fieldName: "userCreated",
             parentPath: [],
             schema: schema,
             currentQuery: "",
-            rootTypeName: schema.subscriptionTypeName
+            segment: .subscriptions
         )
 
         #expect(result.contains("userCreated"))
         #expect(result.contains("id")) // User has "id", so auto-selected
+        #expect(result.contains("subscription Subscription"))
     }
 
-    @Test("setArguments with mutation rootTypeName resolves argument types correctly")
+    @Test("setArguments with mutation segment resolves argument types correctly")
     func setArgumentsForMutation() {
         let service = QueryASTService()
         let schema = makeTestSchema()
@@ -556,21 +563,157 @@ struct QueryASTServiceTests {
             parentPath: [],
             schema: schema,
             currentQuery: "",
-            rootTypeName: schema.mutationTypeName
+            segment: .mutations
         )
 
-        // Now set an argument on createUser using mutation root type
+        // Now set an argument on createUser using mutation segment
         let result = service.setArguments(
             fieldName: "createUser",
             parentPath: [],
             arguments: ["name": "Alice"],
             schema: schema,
             currentQuery: query,
-            rootTypeName: schema.mutationTypeName
+            segment: .mutations
         )
 
         #expect(result.contains("createUser"))
         #expect(result.contains("Alice"))
+    }
+
+    // MARK: - Multi-Operation Tests
+
+    @Test("Adding fields across two segments produces multi-operation document")
+    func multiOperationDocument() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Add a query field
+        var query = service.toggleField(
+            fieldName: "version",
+            parentPath: [],
+            schema: schema,
+            currentQuery: "",
+            segment: .queries
+        )
+        #expect(query.contains("query Query"))
+
+        // Now add a mutation field — should create a second operation
+        query = service.toggleField(
+            fieldName: "createUser",
+            parentPath: [],
+            schema: schema,
+            currentQuery: query,
+            segment: .mutations
+        )
+
+        #expect(query.contains("query Query"))
+        #expect(query.contains("mutation Mutation"))
+        #expect(query.contains("version"))
+        #expect(query.contains("createUser"))
+
+        // Verify selectedPaths are scoped correctly
+        service.parse(query)
+        #expect(paths(service, .queries).contains("version"))
+        #expect(!paths(service, .queries).contains("createUser"))
+        #expect(paths(service, .mutations).contains("createUser"))
+        #expect(!paths(service, .mutations).contains("version"))
+    }
+
+    @Test("Removing last field from a segment removes that operation")
+    func removeLastFieldRemovesOperation() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Create multi-operation document
+        var query = service.toggleField(
+            fieldName: "version",
+            parentPath: [],
+            schema: schema,
+            currentQuery: "",
+            segment: .queries
+        )
+        query = service.toggleField(
+            fieldName: "createUser",
+            parentPath: [],
+            schema: schema,
+            currentQuery: query,
+            segment: .mutations
+        )
+
+        // Remove the mutation's root field (createUser)
+        query = service.toggleField(
+            fieldName: "createUser",
+            parentPath: [],
+            schema: schema,
+            currentQuery: query,
+            segment: .mutations
+        )
+
+        // Should remove "createUser" entirely, leaving an empty mutation operation
+        // which gets cleaned up
+        service.parse(query)
+        #expect(paths(service, .queries).contains("version"))
+        #expect(paths(service, .mutations).isEmpty)
+        #expect(!query.contains("mutation"))
+    }
+
+    @Test("Parse multi-operation text produces scoped selectedPaths")
+    func parseMultiOperationText() {
+        let service = QueryASTService()
+        service.parse("""
+        query Query {
+          user {
+            id
+          }
+        }
+
+        mutation Mutation {
+          createUser {
+            id
+          }
+        }
+        """)
+
+        #expect(paths(service, .queries).contains("user"))
+        #expect(paths(service, .queries).contains("user/id"))
+        #expect(paths(service, .mutations).contains("createUser"))
+        #expect(paths(service, .mutations).contains("createUser/id"))
+        #expect(!paths(service, .queries).contains("createUser"))
+        #expect(!paths(service, .mutations).contains("user"))
+    }
+
+    @Test("Hand-typed operations with custom names map by operation type")
+    func customOperationNames() {
+        let service = QueryASTService()
+        service.parse("""
+        query GetUsers {
+          user {
+            id
+          }
+        }
+
+        mutation CreateStuff {
+          createUser {
+            id
+          }
+        }
+        """)
+
+        // Should still map by operation type keyword, not name
+        #expect(paths(service, .queries).contains("user"))
+        #expect(paths(service, .mutations).contains("createUser"))
+    }
+
+    @Test("activeSegment tracks most recent interaction")
+    func activeSegmentTracking() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        _ = service.toggleField(fieldName: "version", parentPath: [], schema: schema, currentQuery: "", segment: .queries)
+        #expect(service.activeSegment == .queries)
+
+        _ = service.toggleField(fieldName: "createUser", parentPath: [], schema: schema, currentQuery: "", segment: .mutations)
+        #expect(service.activeSegment == .mutations)
     }
 
     // MARK: - Preserved Selections Tests
@@ -583,7 +726,7 @@ struct QueryASTServiceTests {
         service.preserveSelections(forRoot: "user")
 
         #expect(service.hasPreservedSelections(forRoot: "user"))
-        let preserved = service.preservedSelections["user"]
+        let preserved = service.preservedSelections[.queries]?["user"]
         #expect(preserved?.contains("user") == true)
         #expect(preserved?.contains("user/id") == true)
         #expect(preserved?.contains("user/name") == true)
@@ -609,13 +752,13 @@ struct QueryASTServiceTests {
         service.parse("{ user { id } }")
 
         service.preserveSelections(forRoot: "user")
-        #expect(service.preservedSelections["user"]?.contains("user/id") == true)
+        #expect(service.preservedSelections[.queries]?["user"]?.contains("user/id") == true)
 
         // Now parse with different selection and re-preserve
         service.parse("{ user { name email } }")
         service.preserveSelections(forRoot: "user")
 
-        let preserved = service.preservedSelections["user"]!
+        let preserved = service.preservedSelections[.queries]!["user"]!
         #expect(!preserved.contains("user/id"))
         #expect(preserved.contains("user/name"))
         #expect(preserved.contains("user/email"))
@@ -639,12 +782,37 @@ struct QueryASTServiceTests {
         #expect(!service.hasPreservedSelections(forRoot: "nonexistent"))
     }
 
-    @Test("Toggle mutation field without rootTypeName falls back to queryTypeName and fails gracefully")
-    func toggleMutationFieldWithoutRootTypeName() {
+    @Test("Preserved selections scoped per segment")
+    func preservedSelectionsPerSegment() {
+        let service = QueryASTService()
+        service.parse("""
+        query Query {
+          user {
+            id
+          }
+        }
+
+        mutation Mutation {
+          createUser {
+            id
+          }
+        }
+        """)
+
+        service.preserveSelections(forRoot: "user", segment: .queries)
+        service.preserveSelections(forRoot: "createUser", segment: .mutations)
+
+        #expect(service.hasPreservedSelections(forRoot: "user", segment: .queries))
+        #expect(!service.hasPreservedSelections(forRoot: "user", segment: .mutations))
+        #expect(service.hasPreservedSelections(forRoot: "createUser", segment: .mutations))
+    }
+
+    @Test("Toggle mutation field without segment falls back to queryTypeName and fails gracefully")
+    func toggleMutationFieldWithoutSegment() {
         let service = QueryASTService()
         let schema = makeTestSchema()
 
-        // Without rootTypeName, falls back to queryTypeName — createUser doesn't exist on Query
+        // Without segment, defaults to .queries — createUser doesn't exist on Query
         // So it should still add the field but without auto-sub-selection (can't resolve type)
         let result = service.toggleField(
             fieldName: "createUser",

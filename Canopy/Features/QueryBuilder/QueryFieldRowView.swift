@@ -13,6 +13,7 @@ struct QueryFieldRowView: View {
     let isDisabled: Bool
     let parentPath: [String]
     var rootTypeName: String? = nil
+    var operationType: OperationSegment = .queries
     var showTypes: Bool = false
     var depth: Int = 0
     /// Full field data for the Inspect popover (optional — not all callers have it).
@@ -37,7 +38,7 @@ struct QueryFieldRowView: View {
             Toggle(isOn: Binding(
                 get: { isSelected },
                 set: { _ in
-                    toggleAction?.toggle(fieldName, parentPath, rootTypeName)
+                    toggleAction?.toggle(fieldName, parentPath, rootTypeName, operationType)
                 }
             )) {
                 EmptyView()
