@@ -21,6 +21,11 @@ struct QueryFieldRowView: View {
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
     @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
+    @SwiftUI.Environment(\.setFocusedRowAction) private var setFocusAction
+
+    private var pathKey: String {
+        (parentPath + [fieldName]).joined(separator: "/")
+    }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -38,6 +43,7 @@ struct QueryFieldRowView: View {
             Toggle(isOn: Binding(
                 get: { isSelected },
                 set: { _ in
+                    setFocusAction?.setFocus(.field(pathKey))
                     toggleAction?.toggle(fieldName, parentPath, rootTypeName, operationType)
                 }
             )) {
@@ -67,6 +73,10 @@ struct QueryFieldRowView: View {
             }
         }
         .font(.callout)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            setFocusAction?.setFocus(.field(pathKey))
+        }
         .accessibilityLabel("\(fieldName)\(showTypes ? ", \(typeName)" : "")")
         .contextMenu {
             if let field = inspectableField {

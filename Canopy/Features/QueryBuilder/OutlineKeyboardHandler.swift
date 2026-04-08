@@ -7,6 +7,43 @@ enum OutlineRowID: Hashable {
     case field(String) // full path key like "user/id"
 }
 
+// MARK: - Environment keys for focused row
+
+struct SetFocusedRowAction {
+    let setFocus: (OutlineRowID) -> Void
+}
+
+extension EnvironmentValues {
+    @Entry var focusedOutlineRow: OutlineRowID? = nil
+    @Entry var setFocusedRowAction: SetFocusedRowAction? = nil
+}
+
+/// View modifier that highlights a row when it matches the focused outline row.
+/// Purely visual — focus is set by tap handlers at each call site.
+struct OutlineRowHighlight: ViewModifier {
+    let rowID: OutlineRowID
+    @SwiftUI.Environment(\.focusedOutlineRow) private var focusedRow
+
+    private var isFocused: Bool { focusedRow == rowID }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(
+                isFocused
+                    ? RoundedRectangle(cornerRadius: 5).fill(.selection)
+                    : nil
+            )
+    }
+}
+
+extension View {
+    func outlineRowHighlight(_ rowID: OutlineRowID) -> some View {
+        modifier(OutlineRowHighlight(rowID: rowID))
+    }
+}
+
 /// Manages keyboard navigation for the sidebar outline.
 ///
 /// Provides a view modifier that intercepts key events on the sidebar List

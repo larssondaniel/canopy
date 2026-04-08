@@ -50,6 +50,8 @@ struct QueryExplorerView: View {
     @State private var preSearchExpandState: (paths: Set<String>, sections: Set<OperationSegment>)?
     /// Currently focused row for keyboard navigation.
     @State private var focusedRow: OutlineRowID?
+    /// Keyboard focus state for the sidebar list.
+    @FocusState private var isSidebarFocused: Bool
 
     var body: some View {
         Group {
@@ -261,7 +263,10 @@ struct QueryExplorerView: View {
                                 isSearching: hasSearchText,
                                 hasSelectedFields: !selectedPaths.isEmpty
                             )
+                            .outlineRowHighlight(.section(item.segment))
                             .onTapGesture {
+                                focusedRow = .section(item.segment)
+                                isSidebarFocused = true
                                 guard !hasSearchText else { return }
                                 withAnimation {
                                     if expandedSections.contains(item.segment) {
@@ -277,6 +282,11 @@ struct QueryExplorerView: View {
             }
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, 4)
+            .environment(\.focusedOutlineRow, focusedRow)
+            .environment(\.setFocusedRowAction, SetFocusedRowAction { row in
+                focusedRow = row
+                isSidebarFocused = true
+            })
             .environment(\.toggleFieldAction, toggleAction)
             .environment(\.setArgumentAction, setArgAction)
             .environment(\.inspectFieldAction, InspectFieldAction { field, resolvedTypeName in
@@ -290,12 +300,13 @@ struct QueryExplorerView: View {
                 expandedPaths: $expandedPaths,
                 expandedSections: $expandedSections,
                 searchText: $searchText,
-                visibleRows: computeVisibleRows(segments: segments),
+                visibleRows: computeVisibleRows(segments: segments, schema: schema),
                 toggleRow: { row in
                     handleRowToggle(row, schema: schema)
                 }
             )
             .focusable()
+            .focused($isSidebarFocused)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -336,7 +347,7 @@ struct QueryExplorerView: View {
     // MARK: - Keyboard Navigation
 
     /// Build the flat list of visible row IDs for keyboard navigation.
-    private func computeVisibleRows(segments: [(segment: OperationSegment, typeName: String, type: GraphQLFullType)]) -> [OutlineRowID] {
+    private func computeVisibleRows(segments: [(segment: OperationSegment, typeName: String, type: GraphQLFullType)], schema: GraphQLSchema) -> [OutlineRowID] {
         var rows: [OutlineRowID] = []
         let hasSearch = !debouncedSearchText.isEmpty
 
@@ -361,11 +372,56 @@ struct QueryExplorerView: View {
 
             for field in fields {
                 rows.append(.operation(item.segment, field.name))
-                // If this operation is expanded, add its visible sub-fields
-                // (only first level for now — deeper nesting handled by tree)
+
+                // If this root operation is expanded, recurse into its sub-fields
+                if expandedPaths.contains(field.name) {
+                    let returnTypeName = field.type.toTypeRef().namedType
+                    if let returnType = schema.type(named: returnTypeName) {
+                        collectVisibleFields(
+                            parentType: returnType,
+                            parentPath: [field.name],
+                            schema: schema,
+                            ancestorTypes: [returnTypeName],
+                            into: &rows
+                        )
+                    }
+                }
             }
         }
         return rows
+    }
+
+    /// Recursively collect visible sub-field row IDs for expanded fields.
+    private func collectVisibleFields(
+        parentType: GraphQLFullType,
+        parentPath: [String],
+        schema: GraphQLSchema,
+        ancestorTypes: Set<String>,
+        into rows: inout [OutlineRowID]
+    ) {
+        guard let fields = parentType.fields else { return }
+        for field in fields {
+            let pathKey = (parentPath + [field.name]).joined(separator: "/")
+            rows.append(.field(pathKey))
+
+            // If this field is expanded and returns an object type, recurse
+            if expandedPaths.contains(pathKey) {
+                let namedType = field.type.toTypeRef().namedType
+                guard !ancestorTypes.contains(namedType) else { continue } // circular
+                if let returnType = schema.type(named: namedType),
+                   returnType.kind == .object || returnType.kind == .interface || returnType.kind == .union {
+                    var newAncestors = ancestorTypes
+                    newAncestors.insert(namedType)
+                    collectVisibleFields(
+                        parentType: returnType,
+                        parentPath: parentPath + [field.name],
+                        schema: schema,
+                        ancestorTypes: newAncestors,
+                        into: &rows
+                    )
+                }
+            }
+        }
     }
 
     /// Handle space/toggle on a focused row.
@@ -566,6 +622,7 @@ private struct RootExpandableFieldView: View {
     @Binding var expandedPaths: Set<String>
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
+    @SwiftUI.Environment(\.setFocusedRowAction) private var setFocusAction
 
     var body: some View {
         if isObject {
@@ -618,7 +675,9 @@ private struct RootExpandableFieldView: View {
                     showTypes: showTypes,
                     inspectableField: field
                 )
+                .outlineRowHighlight(.operation(operationType, field.name))
                 .onTapGesture {
+                    setFocusAction?.setFocus(.operation(operationType, field.name))
                     withAnimation {
                         rootExpandedBinding.wrappedValue = !expandedPaths.contains(field.name)
                     }
@@ -635,7 +694,9 @@ private struct RootExpandableFieldView: View {
                 showTypes: showTypes,
                 inspectableField: field
             )
+            .outlineRowHighlight(.operation(operationType, field.name))
             .onTapGesture {
+                setFocusAction?.setFocus(.operation(operationType, field.name))
                 guard !isDisabled else { return }
                 toggleAction?.toggle(field.name, [], rootTypeName, operationType)
             }
@@ -845,6 +906,7 @@ private struct ExplorerFieldView: View {
                 showTypes: showTypes,
                 inspectableField: inspectableField
             )
+            .outlineRowHighlight(.field(pathKey))
         }
     }
 
@@ -904,6 +966,7 @@ private struct ExplorerFieldView: View {
                 showTypes: showTypes,
                 inspectableField: inspectableField
             )
+            .outlineRowHighlight(.field(pathKey))
         }
     }
 
