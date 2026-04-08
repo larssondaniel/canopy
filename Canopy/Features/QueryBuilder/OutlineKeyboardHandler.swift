@@ -16,23 +16,30 @@ struct SetFocusedRowAction {
 extension EnvironmentValues {
     @Entry var focusedOutlineRow: OutlineRowID? = nil
     @Entry var setFocusedRowAction: SetFocusedRowAction? = nil
+    /// True when the current row is keyboard-focused (children should use white text).
+    @Entry var isRowHighlighted: Bool = false
 }
 
-/// View modifier that highlights a row when it matches the focused outline row.
-/// Purely visual — focus is set by tap handlers at each call site.
+/// View modifier that highlights an entire List row (including chevron) when focused.
+/// Uses `.listRowBackground()` to span the full row width, Xcode-style.
 struct OutlineRowHighlight: ViewModifier {
     let rowID: OutlineRowID
     @SwiftUI.Environment(\.focusedOutlineRow) private var focusedRow
 
     private var isFocused: Bool { focusedRow == rowID }
 
+    /// Xcode-style selection blue: slightly darker and more muted than the default accent.
+    private static let selectionColor = Color(nsColor: NSColor.controlAccentColor).opacity(0.85)
+
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
-            .background(
+            .environment(\.isRowHighlighted, isFocused)
+            .listRowBackground(
                 isFocused
-                    ? RoundedRectangle(cornerRadius: 5).fill(.selection)
+                    ? RoundedRectangle(cornerRadius: 7)
+                        .fill(Self.selectionColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
                     : nil
             )
     }

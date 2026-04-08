@@ -22,6 +22,7 @@ struct QueryFieldRowView: View {
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
     @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
     @SwiftUI.Environment(\.setFocusedRowAction) private var setFocusAction
+    @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
 
     private var pathKey: String {
         (parentPath + [fieldName]).joined(separator: "/")
@@ -56,12 +57,12 @@ struct QueryFieldRowView: View {
             Text(fieldName)
                 .fontWeight(isSelected ? .semibold : .regular)
                 .strikethrough(isDeprecated)
-                .foregroundStyle(isDeprecated ? .tertiary : .secondary)
+                .foregroundColor(isHighlighted ? .white : isDeprecated ? .gray : .secondary)
 
             if isCircular {
                 Text("(circular)")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundColor(isHighlighted ? .white.opacity(0.7) : .gray)
             }
 
             Spacer()
@@ -69,10 +70,10 @@ struct QueryFieldRowView: View {
             if showTypes {
                 Text(typeName)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundColor(isHighlighted ? .white.opacity(0.7) : .gray)
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
         .contentShape(Rectangle())
         .onTapGesture {
             setFocusAction?.setFocus(.field(pathKey))

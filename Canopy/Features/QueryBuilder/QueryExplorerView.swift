@@ -263,7 +263,6 @@ struct QueryExplorerView: View {
                                 isSearching: hasSearchText,
                                 hasSelectedFields: !selectedPaths.isEmpty
                             )
-                            .outlineRowHighlight(.section(item.segment))
                             .onTapGesture {
                                 focusedRow = .section(item.segment)
                                 isSidebarFocused = true
@@ -277,11 +276,12 @@ struct QueryExplorerView: View {
                                 }
                             }
                         }
+                        .outlineRowHighlight(.section(item.segment))
                     }
                 }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 4)
+            .environment(\.defaultMinListRowHeight, 22)
             .environment(\.focusedOutlineRow, focusedRow)
             .environment(\.setFocusedRowAction, SetFocusedRowAction { row in
                 focusedRow = row
@@ -444,22 +444,27 @@ struct QueryExplorerView: View {
                 }
             }
         case .field(let pathKey):
-            // Toggle the field checkbox via the toggle action
             let components = pathKey.split(separator: "/").map(String.init)
             guard let fieldName = components.last else { return }
             let parentPath = Array(components.dropLast())
-            // Find the segment for this field — check which segment's paths contain a prefix
-            for (seg, paths) in astService.selectedPaths {
-                let root = components.first ?? ""
-                if paths.contains(root) || (astService.selectedPaths[seg] ?? []).isEmpty == false {
-                    // This is a simplification — in practice, fields are always under expanded operations
-                    // which belong to a known segment
-                    break
-                }
-                _ = seg // suppress unused warning
-            }
-            // Field toggles are handled by the row views directly
-            break
+            guard let tab = activeTab else { return }
+
+            // Find which segment this field belongs to by checking the root field name
+            let rootFieldName = components.first ?? ""
+            let segments = availableSegments(for: schema)
+            guard let segmentData = segments.first(where: { item in
+                item.type.fields?.contains(where: { $0.name == rootFieldName }) == true
+            }) else { return }
+
+            let newQuery = astService.toggleField(
+                fieldName: fieldName,
+                parentPath: parentPath,
+                schema: schema,
+                currentQuery: tab.query,
+                rootTypeName: segmentData.typeName,
+                segment: segmentData.segment
+            )
+            tab.query = newQuery
         }
     }
 }
@@ -473,6 +478,7 @@ private struct SectionHeaderRow: View {
     let isSearching: Bool
     let hasSelectedFields: Bool
     @SwiftUI.Environment(\.runOperationAction) private var runAction
+    @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
     @State private var isHoveringRun = false
 
     private var countLabel: String {
@@ -487,19 +493,19 @@ private struct SectionHeaderRow: View {
         HStack(spacing: 6) {
             Image(systemName: segment.icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundColor(isHighlighted ? .white.opacity(0.8) : .secondary)
                 .frame(width: 16, height: 16)
 
             Text(segment.rawValue)
-                .font(.system(.callout, weight: .semibold))
-                .foregroundStyle(.primary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHighlighted ? .white : .primary)
 
             Text(countLabel)
                 .font(.system(.caption2, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundColor(isHighlighted ? .white.opacity(0.7) : .gray)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
-                .background(.quaternary, in: Capsule())
+                .background(isHighlighted ? Color.white.opacity(0.2) : Color.gray.opacity(0.15), in: Capsule())
 
             Spacer(minLength: 4)
 
@@ -509,10 +515,10 @@ private struct SectionHeaderRow: View {
                 } label: {
                     Image(systemName: "play.fill")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(isHoveringRun ? .primary : .tertiary)
+                        .foregroundColor(isHighlighted ? .white : isHoveringRun ? .primary : .gray)
                         .frame(width: 18, height: 18)
                         .background(
-                            isHoveringRun ? Color.primary.opacity(0.08) : .clear,
+                            isHoveringRun ? (isHighlighted ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)) : .clear,
                             in: Circle()
                         )
                 }
@@ -675,7 +681,6 @@ private struct RootExpandableFieldView: View {
                     showTypes: showTypes,
                     inspectableField: field
                 )
-                .outlineRowHighlight(.operation(operationType, field.name))
                 .onTapGesture {
                     setFocusAction?.setFocus(.operation(operationType, field.name))
                     withAnimation {
@@ -683,6 +688,7 @@ private struct RootExpandableFieldView: View {
                     }
                 }
             }
+            .outlineRowHighlight(.operation(operationType, field.name))
         } else {
             // Scalar root field — just show the row with a tap handler
             RootOperationRowView(
@@ -694,12 +700,12 @@ private struct RootExpandableFieldView: View {
                 showTypes: showTypes,
                 inspectableField: field
             )
-            .outlineRowHighlight(.operation(operationType, field.name))
             .onTapGesture {
                 setFocusAction?.setFocus(.operation(operationType, field.name))
                 guard !isDisabled else { return }
                 toggleAction?.toggle(field.name, [], rootTypeName, operationType)
             }
+            .outlineRowHighlight(.operation(operationType, field.name))
         }
     }
 
@@ -966,8 +972,8 @@ private struct ExplorerFieldView: View {
                 showTypes: showTypes,
                 inspectableField: inspectableField
             )
-            .outlineRowHighlight(.field(pathKey))
         }
+        .outlineRowHighlight(.field(pathKey))
     }
 
     private func expandedBinding(for key: String) -> Binding<Bool> {
