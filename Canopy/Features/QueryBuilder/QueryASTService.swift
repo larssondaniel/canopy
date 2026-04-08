@@ -5,6 +5,10 @@ import Observation
 /// Core engine for two-way sync between the Explorer and the text editor.
 /// Parses query text into an AST, supports toggling fields on/off, and reprints
 /// modified ASTs back to text. Uses `suppressReparse` to prevent feedback loops.
+///
+/// Supports multi-operation documents: users can have fields selected across
+/// query, mutation, and subscription sections simultaneously. Each produces
+/// a named operation (e.g. `query Query { ... }`, `mutation Mutation { ... }`).
 @Observable
 @MainActor
 final class QueryASTService {
@@ -22,52 +26,164 @@ final class QueryASTService {
     /// Secondary guard: content comparison to catch formatting differences.
     private var lastPrintedQuery: String?
 
-    /// Cached set of selected field paths (e.g. "user", "user/id", "user/name").
-    /// Rebuilt once per AST change. Views read this for O(1) selection checks
-    /// instead of traversing the AST per-field per-render.
-    private(set) var selectedPaths: Set<String> = []
+    /// Cached set of selected field paths per operation segment.
+    /// E.g. `[.queries: ["user", "user/id", "user/name"], .mutations: ["createUser", "createUser/id"]]`
+    /// Rebuilt once per AST change. Views read this for O(1) selection checks.
+    private(set) var selectedPaths: [OperationSegment: Set<String>] = [:]
 
-    /// Cached argument values extracted from the AST.
-    /// Key: field path (e.g. "user"), Value: [argName: displayValue].
-    /// Rebuilt alongside selectedPaths on every AST change.
-    private(set) var argumentValues: [String: [String: String]] = [:]
+    /// Cached argument values per operation segment.
+    /// Key structure: `[segment: [fieldPath: [argName: displayValue]]]`
+    private(set) var argumentValues: [OperationSegment: [String: [String: String]]] = [:]
 
-    /// Preserved selections for collapsed root operations.
-    /// Key: root field name (e.g. "user"), Value: set of child paths that were selected.
+    /// Preserved selections for collapsed root operations, per segment.
     /// When a root operation is collapsed, its child selections are saved here.
     /// When re-expanded, these are restored.
-    private(set) var preservedSelections: [String: Set<String>] = [:]
+    private(set) var preservedSelections: [OperationSegment: [String: Set<String>]] = [:]
+
+    /// The most recently interacted operation segment (for execution).
+    private(set) var activeSegment: OperationSegment?
+
+    // MARK: - Segment / OperationType Mapping
+
+    private func graphQLOperationType(for segment: OperationSegment) -> OperationType {
+        switch segment {
+        case .queries: .query
+        case .mutations: .mutation
+        case .subscriptions: .subscription
+        }
+    }
+
+    private func segment(for operationType: OperationType) -> OperationSegment {
+        switch operationType {
+        case .query: .queries
+        case .mutation: .mutations
+        case .subscription: .subscriptions
+        }
+    }
+
+    // MARK: - Operation Helpers
+
+    private func operationKeyword(for segment: OperationSegment) -> String {
+        switch segment {
+        case .queries: "query"
+        case .mutations: "mutation"
+        case .subscriptions: "subscription"
+        }
+    }
+
+    private func operationDisplayName(for segment: OperationSegment) -> String {
+        switch segment {
+        case .queries: "Query"
+        case .mutations: "Mutation"
+        case .subscriptions: "Subscription"
+        }
+    }
+
+    private func operationSortOrder(for segment: OperationSegment) -> Int {
+        switch segment {
+        case .queries: 0
+        case .mutations: 1
+        case .subscriptions: 2
+        }
+    }
+
+    private func operationSortOrder(for opType: OperationType) -> Int {
+        operationSortOrder(for: segment(for: opType))
+    }
+
+    /// Find the index of the first operation of the given segment's type in the document.
+    private func findOperationIndex(for segment: OperationSegment, in document: Document) -> Int? {
+        let targetType = graphQLOperationType(for: segment)
+        return document.definitions.firstIndex { def in
+            guard let op = def as? OperationDefinition else { return false }
+            return op.operation == targetType
+        }
+    }
+
+    /// Find the correct insertion index for a new operation to maintain query -> mutation -> subscription order.
+    private func insertionIndex(for segment: OperationSegment, in definitions: [Definition]) -> Int {
+        let targetOrder = operationSortOrder(for: segment)
+        for (i, def) in definitions.enumerated() {
+            guard let op = def as? OperationDefinition else { continue }
+            if operationSortOrder(for: op.operation) > targetOrder {
+                return i
+            }
+        }
+        return definitions.count
+    }
+
+    /// Remove any operation definitions that have empty selection sets.
+    private func removeEmptyOperations(from document: Document) -> Document {
+        let filtered = document.definitions.filter { def in
+            guard let op = def as? OperationDefinition else { return true }
+            return !op.selectionSet.selections.isEmpty
+        }
+        if filtered.count == document.definitions.count { return document }
+        return document.set(value: .array(filtered), key: "definitions")
+    }
+
+    /// Ensure all operation definitions have names. Anonymous operations get default names.
+    private func ensureOperationsNamed(_ document: Document) -> Document {
+        var definitions = document.definitions
+        var changed = false
+        for (i, def) in definitions.enumerated() {
+            guard let op = def as? OperationDefinition, op.name == nil else { continue }
+            let seg = segment(for: op.operation)
+            let keyword = operationKeyword(for: seg)
+            let name = operationDisplayName(for: seg)
+            // Parse a named operation to get a Name node, then graft it onto the existing operation
+            if let nameDoc = try? GraphQL.parse(source: "\(keyword) \(name) { __x }"),
+               let nameOp = nameDoc.definitions.first as? OperationDefinition,
+               let nameNode = nameOp.name {
+                let namedOp = op.set(value: .node(nameNode), key: "name")
+                definitions[i] = namedOp
+                changed = true
+            }
+        }
+        if !changed { return document }
+        return document.set(value: .array(definitions), key: "definitions")
+    }
+
+    /// Resolve the default root type name for a segment from the schema.
+    func rootTypeName(for segment: OperationSegment, schema: GraphQLSchema) -> String? {
+        switch segment {
+        case .queries: schema.queryTypeName
+        case .mutations: schema.mutationTypeName
+        case .subscriptions: schema.subscriptionTypeName
+        }
+    }
 
     // MARK: - Preserved Selections
 
     /// Save the current child selections for a root operation before removing it.
-    /// Copies all paths under `rootFieldName` from `selectedPaths` into the preserved store.
-    func preserveSelections(forRoot rootFieldName: String) {
+    func preserveSelections(forRoot rootFieldName: String, segment: OperationSegment = .queries) {
+        let paths = selectedPaths[segment] ?? []
         let prefix = rootFieldName + "/"
-        let childPaths = selectedPaths.filter { $0.hasPrefix(prefix) }
-        // Include the root itself so we know it was selected
-        var paths = childPaths
-        if selectedPaths.contains(rootFieldName) {
-            paths.insert(rootFieldName)
+        let childPaths = paths.filter { $0.hasPrefix(prefix) }
+        var preserved = childPaths
+        if paths.contains(rootFieldName) {
+            preserved.insert(rootFieldName)
         }
-        preservedSelections[rootFieldName] = paths
+        if preservedSelections[segment] == nil {
+            preservedSelections[segment] = [:]
+        }
+        preservedSelections[segment]?[rootFieldName] = preserved
     }
 
     /// Restore preserved selections for a root operation and remove them from the store.
-    /// Returns the set of paths that were preserved, or nil if none existed.
-    func restoreSelections(forRoot rootFieldName: String) -> Set<String>? {
-        preservedSelections.removeValue(forKey: rootFieldName)
+    func restoreSelections(forRoot rootFieldName: String, segment: OperationSegment = .queries) -> Set<String>? {
+        preservedSelections[segment]?.removeValue(forKey: rootFieldName)
     }
 
     /// Check if there are preserved selections for a root operation.
-    func hasPreservedSelections(forRoot rootFieldName: String) -> Bool {
-        guard let paths = preservedSelections[rootFieldName] else { return false }
+    func hasPreservedSelections(forRoot rootFieldName: String, segment: OperationSegment = .queries) -> Bool {
+        guard let paths = preservedSelections[segment]?[rootFieldName] else { return false }
         return !paths.isEmpty
     }
 
-    /// Clear preserved selections for a root operation (e.g. when user manually deselects).
-    func clearPreservedSelections(forRoot rootFieldName: String) {
-        preservedSelections.removeValue(forKey: rootFieldName)
+    /// Clear preserved selections for a root operation.
+    func clearPreservedSelections(forRoot rootFieldName: String, segment: OperationSegment = .queries) {
+        preservedSelections[segment]?.removeValue(forKey: rootFieldName)
     }
 
     // MARK: - Parse
@@ -108,28 +224,39 @@ final class QueryASTService {
 
     // MARK: - Field Selection State
 
-    /// Check if a field exists at the given path in the current AST.
-    /// Uses the pre-computed `selectedPaths` set for O(1) lookup.
-    func isFieldSelected(fieldName: String, parentPath: [String]) -> Bool {
+    /// Check if a field exists at the given path in the current AST for the given segment.
+    func isFieldSelected(fieldName: String, parentPath: [String], segment: OperationSegment = .queries) -> Bool {
         let path = (parentPath + [fieldName]).joined(separator: "/")
-        return selectedPaths.contains(path)
+        return selectedPaths[segment]?.contains(path) ?? false
     }
 
     // MARK: - Selected Paths Cache
 
-    /// Walk the AST once to build the set of all selected field paths and argument values.
+    /// Walk the AST to build per-segment sets of selected field paths and argument values.
     private func rebuildSelectedPaths() {
-        guard let document = currentDocument,
-              let op = document.definitions.first as? OperationDefinition else {
-            selectedPaths = []
+        guard let document = currentDocument else {
+            selectedPaths = [:]
             argumentValues = [:]
             return
         }
-        var paths = Set<String>()
-        var argVals: [String: [String: String]] = [:]
-        collectPaths(from: op.selectionSet, prefix: "", into: &paths, argValues: &argVals)
-        selectedPaths = paths
-        argumentValues = argVals
+
+        var allPaths: [OperationSegment: Set<String>] = [:]
+        var allArgs: [OperationSegment: [String: [String: String]]] = [:]
+
+        for definition in document.definitions {
+            guard let op = definition as? OperationDefinition else { continue }
+            let seg = segment(for: op.operation)
+            // Use first operation of each type (skip duplicates)
+            if allPaths[seg] != nil { continue }
+            var paths = Set<String>()
+            var argVals: [String: [String: String]] = [:]
+            collectPaths(from: op.selectionSet, prefix: "", into: &paths, argValues: &argVals)
+            allPaths[seg] = paths
+            allArgs[seg] = argVals
+        }
+
+        selectedPaths = allPaths
+        argumentValues = allArgs
     }
 
     private func collectPaths(
@@ -185,19 +312,23 @@ final class QueryASTService {
     /// 3. Else `__typename`
     ///
     /// When removing the last sub-field, removes the parent field entirely.
+    /// When removing the last field in an operation, removes the operation definition.
     func toggleField(
         fieldName: String,
         parentPath: [String],
         schema: GraphQLSchema,
         currentQuery: String,
-        rootTypeName: String? = nil
+        rootTypeName: String? = nil,
+        segment: OperationSegment = .queries
     ) -> String {
-        let isSelected = isFieldSelected(fieldName: fieldName, parentPath: parentPath)
+        let resolvedRootTypeName = rootTypeName ?? self.rootTypeName(for: segment, schema: schema)
+        let isSelected = isFieldSelected(fieldName: fieldName, parentPath: parentPath, segment: segment)
+        activeSegment = segment
 
         if isSelected {
-            return removeField(fieldName: fieldName, parentPath: parentPath, currentQuery: currentQuery)
+            return removeField(fieldName: fieldName, parentPath: parentPath, currentQuery: currentQuery, segment: segment)
         } else {
-            return addField(fieldName: fieldName, parentPath: parentPath, schema: schema, currentQuery: currentQuery, rootTypeName: rootTypeName ?? schema.queryTypeName)
+            return addField(fieldName: fieldName, parentPath: parentPath, schema: schema, currentQuery: currentQuery, rootTypeName: resolvedRootTypeName, segment: segment)
         }
     }
 
@@ -208,57 +339,74 @@ final class QueryASTService {
         parentPath: [String],
         schema: GraphQLSchema,
         currentQuery: String,
-        rootTypeName: String?
+        rootTypeName: String?,
+        segment: OperationSegment = .queries
     ) -> String {
         // Determine the return type of the field being added
         let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema, rootTypeName: rootTypeName)
 
-        // Build the field snippet to parse
-        let snippet: String
+        // Build the field text
+        let fieldSnippet: String
         if let objectType = fieldType, hasSubFields(objectType, schema: schema) {
             let defaultSub = defaultSubField(for: objectType, schema: schema)
-            snippet = "{ \(fieldName) { \(defaultSub) } }"
+            fieldSnippet = "\(fieldName) { \(defaultSub) }"
         } else {
-            snippet = "{ \(fieldName) }"
+            fieldSnippet = fieldName
         }
 
-        // Parse snippet to get the new Field node
-        guard let snippetDoc = try? GraphQL.parse(source: snippet),
-              let snippetOp = snippetDoc.definitions.first as? OperationDefinition,
-              let newField = snippetOp.selectionSet.selections.first else {
-            return currentQuery
-        }
-
-        // If we have no document yet, generate a fresh query
-        guard let document = currentDocument else {
-            let newQuery: String
-            if parentPath.isEmpty {
-                // Top-level field, generate anonymous operation
-                newQuery = GraphQL.print(ast: snippetDoc)
-            } else {
-                // Shouldn't happen in practice — need a document to have a parent path
-                newQuery = currentQuery
-            }
-            let result = newQuery
-            suppressReparse = true
-            lastPrintedQuery = result
-            parse(result) // Update internal AST (will be skipped via suppressReparse, but let's re-parse)
-            suppressReparse = false
-            // Parse the new doc
-            do {
-                currentDocument = try GraphQL.parse(source: result)
-                parseError = nil
-                rebuildSelectedPaths()
-            } catch {}
+        // Case 1: No document exists yet — create a fresh named operation
+        if currentDocument == nil {
+            guard parentPath.isEmpty else { return currentQuery }
+            let keyword = operationKeyword(for: segment)
+            let name = operationDisplayName(for: segment)
+            let fullQuery = "\(keyword) \(name) { \(fieldSnippet) }"
+            guard let newDoc = try? GraphQL.parse(source: fullQuery) else { return currentQuery }
+            let result = GraphQL.print(ast: newDoc)
+            currentDocument = newDoc
+            parseError = nil
+            rebuildSelectedPaths()
             suppressReparse = true
             lastPrintedQuery = result
             return result
         }
 
-        // Rebuild the AST with the new field added
-        guard let newDocument = addFieldToDocument(newField, at: parentPath, in: document) else {
+        guard let document = currentDocument else { return currentQuery }
+
+        // Parse a simple snippet to extract the field AST node
+        guard let snippetDoc = try? GraphQL.parse(source: "{ \(fieldSnippet) }"),
+              let snippetOp = snippetDoc.definitions.first as? OperationDefinition,
+              let newField = snippetOp.selectionSet.selections.first else {
             return currentQuery
         }
+
+        // Case 2: Operation of this type already exists — add field to it
+        if findOperationIndex(for: segment, in: document) != nil {
+            guard let newDocument = addFieldToDocument(newField, at: parentPath, in: document, segment: segment) else {
+                return currentQuery
+            }
+            let result = GraphQL.print(ast: newDocument)
+            currentDocument = newDocument
+            parseError = nil
+            rebuildSelectedPaths()
+            suppressReparse = true
+            lastPrintedQuery = result
+            return result
+        }
+
+        // Case 3: No operation of this type — create a new one and add to document
+        guard parentPath.isEmpty else { return currentQuery }
+        let keyword = operationKeyword(for: segment)
+        let name = operationDisplayName(for: segment)
+        let opSnippet = "\(keyword) \(name) { \(fieldSnippet) }"
+        guard let opDoc = try? GraphQL.parse(source: opSnippet),
+              let newOpDef = opDoc.definitions.first else { return currentQuery }
+
+        // Ensure existing anonymous operations get names before adding a second operation
+        let namedDoc = ensureOperationsNamed(document)
+        var definitions = namedDoc.definitions
+        let insertIdx = insertionIndex(for: segment, in: definitions)
+        definitions.insert(newOpDef, at: insertIdx)
+        let newDocument = namedDoc.set(value: .array(definitions), key: "definitions")
 
         let result = GraphQL.print(ast: newDocument)
         currentDocument = newDocument
@@ -274,16 +422,30 @@ final class QueryASTService {
     private func removeField(
         fieldName: String,
         parentPath: [String],
-        currentQuery: String
+        currentQuery: String,
+        segment: OperationSegment = .queries
     ) -> String {
         guard let document = currentDocument else { return currentQuery }
 
-        guard let newDocument = removeFieldFromDocument(fieldName, at: parentPath, in: document) else {
+        guard let newDocument = removeFieldFromDocument(fieldName, at: parentPath, in: document, segment: segment) else {
             return currentQuery
         }
 
-        let result = GraphQL.print(ast: newDocument)
-        currentDocument = newDocument
+        // Remove any operations that ended up with empty selection sets
+        let cleanedDocument = removeEmptyOperations(from: newDocument)
+
+        // If no definitions remain, clear everything
+        if cleanedDocument.definitions.isEmpty {
+            currentDocument = nil
+            parseError = nil
+            lastPrintedQuery = nil
+            rebuildSelectedPaths()
+            suppressReparse = true
+            return ""
+        }
+
+        let result = GraphQL.print(ast: cleanedDocument)
+        currentDocument = cleanedDocument
         parseError = nil
         rebuildSelectedPaths()
         suppressReparse = true
@@ -293,10 +455,10 @@ final class QueryASTService {
 
     // MARK: - AST Navigation
 
-    /// Find the SelectionSet at a given path in the document.
-    /// Empty path returns the root operation's selection set.
-    private func selectionSetAtPath(_ path: [String], in document: Document) -> SelectionSet? {
-        guard let op = document.definitions.first as? OperationDefinition else {
+    /// Find the SelectionSet at a given path in the document for a specific segment.
+    private func selectionSetAtPath(_ path: [String], in document: Document, segment: OperationSegment = .queries) -> SelectionSet? {
+        guard let index = findOperationIndex(for: segment, in: document),
+              let op = document.definitions[index] as? OperationDefinition else {
             return nil
         }
 
@@ -315,14 +477,15 @@ final class QueryASTService {
 
     // MARK: - AST Modification (using set methods)
 
-    /// Add a field (as a Selection) to the document at the given path.
-    /// Returns a new Document with the modification, or nil on failure.
+    /// Add a field (as a Selection) to the document at the given path for a specific segment.
     private func addFieldToDocument(
         _ newField: Selection,
         at parentPath: [String],
-        in document: Document
+        in document: Document,
+        segment: OperationSegment
     ) -> Document? {
-        guard let op = document.definitions.first as? OperationDefinition else {
+        guard let index = findOperationIndex(for: segment, in: document),
+              let op = document.definitions[index] as? OperationDefinition else {
             return nil
         }
 
@@ -338,22 +501,21 @@ final class QueryASTService {
         guard let newSelectionSet else { return nil }
 
         let newOp = op.set(value: .node(newSelectionSet), key: "selectionSet")
-        var definitions: [Definition] = [newOp]
-        // Preserve other definitions (fragments, additional operations)
-        if document.definitions.count > 1 {
-            definitions.append(contentsOf: document.definitions.dropFirst())
-        }
+        var definitions = document.definitions
+        definitions[index] = newOp
         return document.set(value: .array(definitions), key: "definitions")
     }
 
-    /// Remove a field by name from the document at the given path.
+    /// Remove a field by name from the document at the given path for a specific segment.
     /// If removing the last sub-field, removes the parent field too.
     private func removeFieldFromDocument(
         _ fieldName: String,
         at parentPath: [String],
-        in document: Document
+        in document: Document,
+        segment: OperationSegment
     ) -> Document? {
-        guard let op = document.definitions.first as? OperationDefinition else {
+        guard let index = findOperationIndex(for: segment, in: document),
+              let op = document.definitions[index] as? OperationDefinition else {
             return nil
         }
 
@@ -378,15 +540,13 @@ final class QueryASTService {
             if let targetSS = findSelectionSetInModified(newSelectionSet, at: parentPath),
                targetSS.selections.isEmpty {
                 // Remove the parent field that now has empty selections
-                return removeFieldFromDocument(targetFieldName, at: parentOfTarget, in: document)
+                return removeFieldFromDocument(targetFieldName, at: parentOfTarget, in: document, segment: segment)
             }
         }
 
         let newOp = op.set(value: .node(newSelectionSet), key: "selectionSet")
-        var definitions: [Definition] = [newOp]
-        if document.definitions.count > 1 {
-            definitions.append(contentsOf: document.definitions.dropFirst())
-        }
+        var definitions = document.definitions
+        definitions[index] = newOp
         return document.set(value: .array(definitions), key: "definitions")
     }
 
@@ -462,18 +622,16 @@ final class QueryASTService {
 
         switch typeName {
         case "String", "ID":
-            // Escape any embedded quotes and wrap
             let escaped = trimmed.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
             return "\"\(escaped)\""
         case "Int":
-            return trimmed // Bare integer
+            return trimmed
         case "Float":
-            return trimmed // Bare float
+            return trimmed
         case "Boolean":
-            return trimmed.lowercased() // true/false
+            return trimmed.lowercased()
         default:
-            // Unknown scalar — try bare (works for custom scalars)
             return "\"\(trimmed)\""
         }
     }
@@ -486,11 +644,13 @@ final class QueryASTService {
         arguments: [String: String],
         schema: GraphQLSchema,
         currentQuery: String,
-        rootTypeName: String? = nil
+        rootTypeName: String? = nil,
+        segment: OperationSegment = .queries
     ) -> String {
         guard let document = currentDocument else { return currentQuery }
 
-        let resolvedRootTypeName = rootTypeName ?? schema.queryTypeName
+        let resolvedRootTypeName = rootTypeName ?? self.rootTypeName(for: segment, schema: schema)
+        activeSegment = segment
 
         // Resolve schema info for the field to get argument types
         let schemaArgs = resolveFieldArgs(fieldName: fieldName, parentPath: parentPath, schema: schema, rootTypeName: resolvedRootTypeName)
@@ -527,7 +687,8 @@ final class QueryASTService {
         let newArguments = snippetField.arguments
 
         // Modify the target field in the document
-        guard let op = document.definitions.first as? OperationDefinition else {
+        guard let index = findOperationIndex(for: segment, in: document),
+              let op = document.definitions[index] as? OperationDefinition else {
             return currentQuery
         }
 
@@ -542,10 +703,8 @@ final class QueryASTService {
         guard let newSelectionSet else { return currentQuery }
 
         let newOp = op.set(value: .node(newSelectionSet), key: "selectionSet")
-        var definitions: [Definition] = [newOp]
-        if document.definitions.count > 1 {
-            definitions.append(contentsOf: document.definitions.dropFirst())
-        }
+        var definitions = document.definitions
+        definitions[index] = newOp
         let newDocument = document.set(value: .array(definitions), key: "definitions")
 
         let result = GraphQL.print(ast: newDocument)
@@ -558,7 +717,6 @@ final class QueryASTService {
     }
 
     /// Modify a specific field by name at the given parent path.
-    /// The transform closure receives the Field and returns a modified Field.
     private func modifyFieldInSelectionSet(
         _ selectionSet: SelectionSet,
         fieldName: String,
@@ -610,8 +768,6 @@ final class QueryASTService {
     }
 
     /// Resolve the argument type names for a field from the schema.
-    /// The `rootTypeName` parameter specifies which root type to start traversal from
-    /// (e.g. the query, mutation, or subscription type name).
     private func resolveFieldArgs(
         fieldName: String,
         parentPath: [String],
@@ -644,15 +800,12 @@ final class QueryASTService {
     // MARK: - Schema Helpers
 
     /// Resolve the GraphQL type name for a field at a given path.
-    /// The `rootTypeName` parameter specifies which root type to start traversal from
-    /// (e.g. the query, mutation, or subscription type name).
     private func resolveFieldType(
         fieldName: String,
         parentPath: [String],
         schema: GraphQLSchema,
         rootTypeName: String?
     ) -> GraphQLFullType? {
-        // Start from the specified root operation type
         var currentTypeName = rootTypeName
         for pathField in parentPath {
             guard let typeName = currentTypeName,
@@ -692,12 +845,10 @@ final class QueryASTService {
             return "__typename"
         }
 
-        // 1. Prefer "id"
         if fields.contains(where: { $0.name == "id" }) {
             return "id"
         }
 
-        // 2. First scalar or enum field
         for field in fields {
             let namedType = field.type.toTypeRef().namedType
             if let resolved = schema.type(named: namedType) {
@@ -707,7 +858,6 @@ final class QueryASTService {
             }
         }
 
-        // 3. Fallback
         return "__typename"
     }
 }

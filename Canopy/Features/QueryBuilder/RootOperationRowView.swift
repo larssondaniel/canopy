@@ -38,12 +38,13 @@ struct RootOperationRowView: View {
     var inspectableField: GraphQLField? = nil
 
     @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
+    @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
 
     var body: some View {
         HStack(spacing: 4) {
             Text(fieldName)
                 .fontWeight(.medium)
-                .foregroundStyle(isDeprecated ? .secondary : .primary)
+                .foregroundColor(isHighlighted ? .white : isDeprecated ? .secondary : .primary)
                 .strikethrough(isDeprecated)
 
             Spacer()
@@ -51,10 +52,10 @@ struct RootOperationRowView: View {
             if showTypes {
                 Text(typeName)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundColor(isHighlighted ? .white.opacity(0.7) : .gray)
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
         .contentShape(Rectangle())
         .accessibilityLabel("\(fieldName)\(isSelected ? ", selected" : "")")
         .accessibilityHint("Click to \(isSelected ? "deselect" : "select")")

@@ -3,12 +3,12 @@ import SwiftUI
 /// Environment key for the toggle field action, used by QueryFieldRowView
 /// to avoid passing closures (which defeat SwiftUI body-skip optimization).
 struct ToggleFieldAction {
-    let toggle: @MainActor (_ fieldName: String, _ parentPath: [String], _ rootTypeName: String?) -> Void
+    let toggle: @MainActor (_ fieldName: String, _ parentPath: [String], _ rootTypeName: String?, _ segment: OperationSegment) -> Void
 }
 
 /// Environment key for the set argument action.
 struct SetArgumentAction {
-    let setArgument: @MainActor (_ fieldName: String, _ parentPath: [String], _ argName: String, _ value: String, _ rootTypeName: String?) -> Void
+    let setArgument: @MainActor (_ fieldName: String, _ parentPath: [String], _ argName: String, _ value: String, _ rootTypeName: String?, _ segment: OperationSegment) -> Void
 }
 
 /// Environment key for the inspect field action.
@@ -16,14 +16,23 @@ struct InspectFieldAction {
     let inspect: @MainActor (_ field: GraphQLField, _ resolvedTypeName: String) -> Void
 }
 
+/// Environment key for running a specific operation from the sidebar.
+struct RunOperationAction {
+    let run: @MainActor (_ segment: OperationSegment) -> Void
+}
+
 extension EnvironmentValues {
     @Entry var toggleFieldAction: ToggleFieldAction? = nil
     @Entry var setArgumentAction: SetArgumentAction? = nil
     @Entry var inspectFieldAction: InspectFieldAction? = nil
+    @Entry var runOperationAction: RunOperationAction? = nil
 }
 
-/// Visual query builder tree with segmented operation filter and click-to-toggle
+/// Visual query builder tree with collapsible operation sections and click-to-toggle
 /// root operations. Stays in two-way sync with the query text editor via AST manipulation.
+///
+/// Shows all three operation types (Queries, Mutations, Subscriptions) simultaneously
+/// as collapsible section headers in a single navigable outline.
 struct QueryExplorerView: View {
     var activeTab: QueryTab?
     var astService: QueryASTService
@@ -33,10 +42,16 @@ struct QueryExplorerView: View {
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var expandedPaths: Set<String> = []
-    @AppStorage("selectedOperationSegment") private var selectedSegment: String = OperationSegment.queries.rawValue
+    @State private var expandedSections: Set<OperationSegment> = [.queries]
     @AppStorage("showFieldTypes") private var showTypes = false
     @State private var showTypeBrowser = false
     @State private var inspectedField: InspectedFieldInfo?
+    /// Snapshot of expand state before search began, for restoring on clear.
+    @State private var preSearchExpandState: (paths: Set<String>, sections: Set<OperationSegment>)?
+    /// Currently focused row for keyboard navigation.
+    @State private var focusedRow: OutlineRowID?
+    /// Keyboard focus state for the sidebar list.
+    @FocusState private var isSidebarFocused: Bool
 
     var body: some View {
         Group {
@@ -59,6 +74,35 @@ struct QueryExplorerView: View {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             astService.parse(activeTab?.query ?? "")
+        }
+        .onChange(of: debouncedSearchText) { oldValue, newValue in
+            if oldValue.isEmpty && !newValue.isEmpty {
+                // Search started — snapshot expand state
+                preSearchExpandState = (paths: expandedPaths, sections: expandedSections)
+            } else if !oldValue.isEmpty && newValue.isEmpty {
+                // Search cleared — restore expand state
+                if let snapshot = preSearchExpandState {
+                    expandedPaths = snapshot.paths
+                    expandedSections = snapshot.sections
+                    preSearchExpandState = nil
+                }
+            }
+        }
+        .onChange(of: expandedSections) { _, newValue in
+            if let endpoint = schemaStore.activeEndpoint {
+                ExpandStateStore.saveExpandedSections(newValue, for: endpoint)
+            }
+        }
+        .onChange(of: expandedPaths) { _, newValue in
+            if let endpoint = schemaStore.activeEndpoint {
+                ExpandStateStore.saveExpandedPaths(newValue, for: endpoint)
+            }
+        }
+        .task(id: schemaStore.activeEndpoint) {
+            // Load persisted expand state when endpoint changes
+            guard let endpoint = schemaStore.activeEndpoint else { return }
+            expandedSections = ExpandStateStore.loadExpandedSections(for: endpoint)
+            expandedPaths = ExpandStateStore.loadExpandedPaths(for: endpoint)
         }
     }
 
@@ -118,33 +162,28 @@ struct QueryExplorerView: View {
         return result
     }
 
-    private func activeSegmentData(segments: [(segment: OperationSegment, typeName: String, type: GraphQLFullType)]) -> (segment: OperationSegment, typeName: String, type: GraphQLFullType)? {
-        let current = OperationSegment(rawValue: selectedSegment)
-        return segments.first(where: { $0.segment == current }) ?? segments.first
-    }
-
     // MARK: - Explorer Tree
 
     @ViewBuilder
     private func explorerTree(schema: GraphQLSchema, endpoint: String) -> some View {
         let segments = availableSegments(for: schema)
-        let active = activeSegmentData(segments: segments)
 
-        let toggleAction = ToggleFieldAction { fieldName, parentPath, rootTypeName in
+        let toggleAction = ToggleFieldAction { fieldName, parentPath, rootTypeName, segment in
             guard let tab = activeTab else { return }
             let newQuery = astService.toggleField(
                 fieldName: fieldName,
                 parentPath: parentPath,
                 schema: schema,
                 currentQuery: tab.query,
-                rootTypeName: rootTypeName
+                rootTypeName: rootTypeName,
+                segment: segment
             )
             tab.query = newQuery
         }
 
-        let setArgAction = SetArgumentAction { fieldName, parentPath, argName, value, rootTypeName in
+        let setArgAction = SetArgumentAction { fieldName, parentPath, argName, value, rootTypeName, segment in
             guard let tab = activeTab else { return }
-            var allArgs = astService.argumentValues[(parentPath + [fieldName]).joined(separator: "/")] ?? [:]
+            var allArgs = astService.argumentValues[segment]?[(parentPath + [fieldName]).joined(separator: "/")] ?? [:]
             if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 allArgs.removeValue(forKey: argName)
             } else {
@@ -156,24 +195,16 @@ struct QueryExplorerView: View {
                 arguments: allArgs,
                 schema: schema,
                 currentQuery: tab.query,
-                rootTypeName: rootTypeName
+                rootTypeName: rootTypeName,
+                segment: segment
             )
             tab.query = newQuery
         }
 
-        // Read @Observable properties ONCE at this level.
-        let selectedPaths = astService.selectedPaths
-        let argValues = astService.argumentValues
         let hasParseError = astService.parseError != nil
-        let multipleOps = (astService.currentDocument?.definitions.count ?? 0) > 1
         let isDisabled = activeTab == nil
 
         VStack(spacing: 0) {
-            // Segmented filter — only show if more than one operation type
-            if segments.count > 1 {
-                segmentedFilter(segments: segments, schema: schema)
-            }
-
             List {
                 if hasParseError {
                     HStack(spacing: 4) {
@@ -185,35 +216,77 @@ struct QueryExplorerView: View {
                     }
                 }
 
-                if multipleOps {
-                    HStack(spacing: 4) {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.blue)
-                        Text("Showing first operation only")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                ForEach(segments, id: \.segment) { item in
+                    let selectedPaths = astService.selectedPaths[item.segment] ?? []
+                    let argValues = astService.argumentValues[item.segment] ?? [:]
+                    let fieldCount = item.type.fields?.count ?? 0
+                    let isSectionExpanded = expandedSections.contains(item.segment)
+                    let matchCount = searchMatchCount(for: item.type)
+                    let hasSearchText = !debouncedSearchText.isEmpty
 
-                if let active {
-                    RootFieldListView(
-                        rootType: active.type,
-                        rootTypeName: active.typeName,
-                        operationType: active.segment,
-                        schema: schema,
-                        searchText: debouncedSearchText,
-                        selectedPaths: selectedPaths,
-                        argumentValues: argValues,
-                        isDisabled: isDisabled,
-                        showTypes: showTypes,
-                        astService: astService,
-                        activeTab: activeTab,
-                        expandedPaths: $expandedPaths
-                    )
+                    // During search: auto-expand sections with matches, hide sections with no matches
+                    let effectivelyExpanded = hasSearchText ? (matchCount > 0) : isSectionExpanded
+                    if !hasSearchText || matchCount > 0 {
+                        DisclosureGroup(isExpanded: Binding(
+                            get: { effectivelyExpanded },
+                            set: { newValue in
+                                if !hasSearchText {
+                                    withAnimation {
+                                        if newValue {
+                                            expandedSections.insert(item.segment)
+                                        } else {
+                                            expandedSections.remove(item.segment)
+                                        }
+                                    }
+                                }
+                            }
+                        )) {
+                            RootFieldListView(
+                                rootType: item.type,
+                                rootTypeName: item.typeName,
+                                operationType: item.segment,
+                                schema: schema,
+                                searchText: debouncedSearchText,
+                                selectedPaths: selectedPaths,
+                                argumentValues: argValues,
+                                isDisabled: isDisabled,
+                                showTypes: showTypes,
+                                astService: astService,
+                                activeTab: activeTab,
+                                expandedPaths: $expandedPaths
+                            )
+                        } label: {
+                            SectionHeaderRow(
+                                segment: item.segment,
+                                fieldCount: fieldCount,
+                                matchCount: matchCount,
+                                isSearching: hasSearchText,
+                                hasSelectedFields: !selectedPaths.isEmpty
+                            )
+                            .onTapGesture {
+                                focusedRow = .section(item.segment)
+                                isSidebarFocused = true
+                                guard !hasSearchText else { return }
+                                withAnimation {
+                                    if expandedSections.contains(item.segment) {
+                                        expandedSections.remove(item.segment)
+                                    } else {
+                                        expandedSections.insert(item.segment)
+                                    }
+                                }
+                            }
+                        }
+                        .outlineRowHighlight(.section(item.segment))
+                    }
                 }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 4)
+            .environment(\.defaultMinListRowHeight, 22)
+            .environment(\.focusedOutlineRow, focusedRow)
+            .environment(\.setFocusedRowAction, SetFocusedRowAction { row in
+                focusedRow = row
+                isSidebarFocused = true
+            })
             .environment(\.toggleFieldAction, toggleAction)
             .environment(\.setArgumentAction, setArgAction)
             .environment(\.inspectFieldAction, InspectFieldAction { field, resolvedTypeName in
@@ -222,6 +295,18 @@ struct QueryExplorerView: View {
             .popover(item: $inspectedField) { info in
                 FieldInspectPopover(field: info.field, resolvedTypeName: info.resolvedTypeName)
             }
+            .outlineKeyboardNavigation(
+                focusedRow: $focusedRow,
+                expandedPaths: $expandedPaths,
+                expandedSections: $expandedSections,
+                searchText: $searchText,
+                visibleRows: computeVisibleRows(segments: segments, schema: schema),
+                toggleRow: { row in
+                    handleRowToggle(row, schema: schema)
+                }
+            )
+            .focusable()
+            .focused($isSidebarFocused)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -251,48 +336,206 @@ struct QueryExplorerView: View {
         }
     }
 
-    // MARK: - Segmented Filter
+    // MARK: - Search Helpers
 
-    @ViewBuilder
-    private func segmentedFilter(segments: [(segment: OperationSegment, typeName: String, type: GraphQLFullType)], schema: GraphQLSchema) -> some View {
-        GeometryReader { geo in
-            let useIcons = geo.size.width < 220
-
-            Picker("", selection: $selectedSegment) {
-                ForEach(segments, id: \.segment) { item in
-                    let matchCount = crossSegmentMatchCount(for: item.type)
-                    if useIcons {
-                        Image(systemName: item.segment.icon)
-                            .help(badgeLabel(item.segment.rawValue, count: matchCount))
-                            .tag(item.segment.rawValue)
-                    } else {
-                        Text(badgeLabel(item.segment.rawValue, count: matchCount))
-                            .tag(item.segment.rawValue)
-                    }
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-        }
-        .frame(height: 34)
-    }
-
-    private func crossSegmentMatchCount(for rootType: GraphQLFullType) -> Int {
+    private func searchMatchCount(for rootType: GraphQLFullType) -> Int {
         guard !debouncedSearchText.isEmpty else { return 0 }
         let query = debouncedSearchText.lowercased()
         return rootType.fields?.filter { $0.name.lowercased().contains(query) }.count ?? 0
     }
 
-    private func badgeLabel(_ base: String, count: Int) -> String {
-        if count > 0 && !debouncedSearchText.isEmpty {
-            return "\(base) (\(count))"
+    // MARK: - Keyboard Navigation
+
+    /// Build the flat list of visible row IDs for keyboard navigation.
+    private func computeVisibleRows(segments: [(segment: OperationSegment, typeName: String, type: GraphQLFullType)], schema: GraphQLSchema) -> [OutlineRowID] {
+        var rows: [OutlineRowID] = []
+        let hasSearch = !debouncedSearchText.isEmpty
+
+        for item in segments {
+            let matchCount = searchMatchCount(for: item.type)
+            let isVisible = !hasSearch || matchCount > 0
+            guard isVisible else { continue }
+
+            rows.append(.section(item.segment))
+
+            let isSectionExpanded = hasSearch ? (matchCount > 0) : expandedSections.contains(item.segment)
+            guard isSectionExpanded else { continue }
+
+            let allFields = item.type.fields ?? []
+            let fields: [GraphQLField]
+            if hasSearch {
+                let query = debouncedSearchText.lowercased()
+                fields = allFields.filter { $0.name.lowercased().contains(query) }
+            } else {
+                fields = allFields
+            }
+
+            for field in fields {
+                rows.append(.operation(item.segment, field.name))
+
+                // If this root operation is expanded, recurse into its sub-fields
+                if expandedPaths.contains(field.name) {
+                    let returnTypeName = field.type.toTypeRef().namedType
+                    if let returnType = schema.type(named: returnTypeName) {
+                        collectVisibleFields(
+                            parentType: returnType,
+                            parentPath: [field.name],
+                            schema: schema,
+                            ancestorTypes: [returnTypeName],
+                            into: &rows
+                        )
+                    }
+                }
+            }
         }
-        return base
+        return rows
+    }
+
+    /// Recursively collect visible sub-field row IDs for expanded fields.
+    private func collectVisibleFields(
+        parentType: GraphQLFullType,
+        parentPath: [String],
+        schema: GraphQLSchema,
+        ancestorTypes: Set<String>,
+        into rows: inout [OutlineRowID]
+    ) {
+        guard let fields = parentType.fields else { return }
+        for field in fields {
+            let pathKey = (parentPath + [field.name]).joined(separator: "/")
+            rows.append(.field(pathKey))
+
+            // If this field is expanded and returns an object type, recurse
+            if expandedPaths.contains(pathKey) {
+                let namedType = field.type.toTypeRef().namedType
+                guard !ancestorTypes.contains(namedType) else { continue } // circular
+                if let returnType = schema.type(named: namedType),
+                   returnType.kind == .object || returnType.kind == .interface || returnType.kind == .union {
+                    var newAncestors = ancestorTypes
+                    newAncestors.insert(namedType)
+                    collectVisibleFields(
+                        parentType: returnType,
+                        parentPath: parentPath + [field.name],
+                        schema: schema,
+                        ancestorTypes: newAncestors,
+                        into: &rows
+                    )
+                }
+            }
+        }
+    }
+
+    /// Handle space/toggle on a focused row.
+    private func handleRowToggle(_ row: OutlineRowID, schema: GraphQLSchema) {
+        switch row {
+        case .section(let segment):
+            withAnimation {
+                if expandedSections.contains(segment) {
+                    expandedSections.remove(segment)
+                } else {
+                    expandedSections.insert(segment)
+                }
+            }
+        case .operation(_, let fieldName):
+            withAnimation {
+                if expandedPaths.contains(fieldName) {
+                    expandedPaths.remove(fieldName)
+                } else {
+                    expandedPaths.insert(fieldName)
+                }
+            }
+        case .field(let pathKey):
+            let components = pathKey.split(separator: "/").map(String.init)
+            guard let fieldName = components.last else { return }
+            let parentPath = Array(components.dropLast())
+            guard let tab = activeTab else { return }
+
+            // Find which segment this field belongs to by checking the root field name
+            let rootFieldName = components.first ?? ""
+            let segments = availableSegments(for: schema)
+            guard let segmentData = segments.first(where: { item in
+                item.type.fields?.contains(where: { $0.name == rootFieldName }) == true
+            }) else { return }
+
+            let newQuery = astService.toggleField(
+                fieldName: fieldName,
+                parentPath: parentPath,
+                schema: schema,
+                currentQuery: tab.query,
+                rootTypeName: segmentData.typeName,
+                segment: segmentData.segment
+            )
+            tab.query = newQuery
+        }
     }
 }
 
-// MARK: - Root Field List (replaces OperationSectionView)
+// MARK: - Section Header Row
+
+private struct SectionHeaderRow: View {
+    let segment: OperationSegment
+    let fieldCount: Int
+    let matchCount: Int
+    let isSearching: Bool
+    let hasSelectedFields: Bool
+    @SwiftUI.Environment(\.runOperationAction) private var runAction
+    @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
+    @State private var isHoveringRun = false
+
+    private var countLabel: String {
+        if isSearching && matchCount > 0 {
+            "\(matchCount) of \(fieldCount)"
+        } else {
+            "\(fieldCount)"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: segment.icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(isHighlighted ? .white.opacity(0.8) : .secondary)
+                .frame(width: 16, height: 16)
+
+            Text(segment.rawValue)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHighlighted ? .white : .primary)
+
+            Text(countLabel)
+                .font(.system(.caption2, weight: .medium))
+                .foregroundColor(isHighlighted ? .white.opacity(0.7) : .gray)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(isHighlighted ? Color.white.opacity(0.2) : Color.gray.opacity(0.15), in: Capsule())
+
+            Spacer(minLength: 4)
+
+            if hasSelectedFields, let runAction {
+                Button {
+                    runAction.run(segment)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(isHighlighted ? .white : isHoveringRun ? .primary : .gray)
+                        .frame(width: 18, height: 18)
+                        .background(
+                            isHoveringRun ? (isHighlighted ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)) : .clear,
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+                .onHover { isHoveringRun = $0 }
+                .help("Run \(segment.rawValue.dropLast())")
+                .disabled(segment == .subscriptions)
+            }
+        }
+        .contentShape(Rectangle())
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(segment.rawValue), \(fieldCount) fields")
+    }
+}
+
+// MARK: - Root Field List
 
 private struct RootFieldListView: View {
     let rootType: GraphQLFullType
@@ -385,6 +628,7 @@ private struct RootExpandableFieldView: View {
     @Binding var expandedPaths: Set<String>
 
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
+    @SwiftUI.Environment(\.setFocusedRowAction) private var setFocusAction
 
     var body: some View {
         if isObject {
@@ -404,7 +648,8 @@ private struct RootExpandableFieldView: View {
                         isDisabled: isDisabled,
                         fieldName: field.name,
                         parentPath: [],
-                        rootTypeName: rootTypeName
+                        rootTypeName: rootTypeName,
+                        operationType: operationType
                     )
                 }
 
@@ -416,6 +661,7 @@ private struct RootExpandableFieldView: View {
                         schema: schema,
                         parentPath: [field.name],
                         rootTypeName: rootTypeName,
+                        operationType: operationType,
                         selectedPaths: selectedPaths,
                         argumentValues: argumentValues,
                         isDisabled: isDisabled,
@@ -436,11 +682,13 @@ private struct RootExpandableFieldView: View {
                     inspectableField: field
                 )
                 .onTapGesture {
+                    setFocusAction?.setFocus(.operation(operationType, field.name))
                     withAnimation {
                         rootExpandedBinding.wrappedValue = !expandedPaths.contains(field.name)
                     }
                 }
             }
+            .outlineRowHighlight(.operation(operationType, field.name))
         } else {
             // Scalar root field — just show the row with a tap handler
             RootOperationRowView(
@@ -453,14 +701,15 @@ private struct RootExpandableFieldView: View {
                 inspectableField: field
             )
             .onTapGesture {
+                setFocusAction?.setFocus(.operation(operationType, field.name))
                 guard !isDisabled else { return }
-                toggleAction?.toggle(field.name, [], rootTypeName)
+                toggleAction?.toggle(field.name, [], rootTypeName, operationType)
             }
+            .outlineRowHighlight(.operation(operationType, field.name))
         }
     }
 
     /// Unified binding: expanding = select in AST, collapsing = deselect from AST.
-    /// Both chevron clicks and label clicks go through this single code path.
     private var rootExpandedBinding: Binding<Bool> {
         Binding(
             get: { expandedPaths.contains(field.name) },
@@ -468,11 +717,11 @@ private struct RootExpandableFieldView: View {
                 guard !isDisabled else { return }
 
                 if newValue {
-                    // Expanding → select the operation in the AST
+                    // Expanding -> select the operation in the AST
                     if !isSelected {
-                        if let preserved = astService.restoreSelections(forRoot: field.name) {
+                        if let preserved = astService.restoreSelections(forRoot: field.name, segment: operationType) {
                             // Step 1: Add the root (which auto-adds a default sub-selection)
-                            toggleAction?.toggle(field.name, [], rootTypeName)
+                            toggleAction?.toggle(field.name, [], rootTypeName, operationType)
                             if let tab = activeTab {
                                 let rootPrefix = field.name + "/"
                                 let preservedChildren = preserved.filter { $0.hasPrefix(rootPrefix) }
@@ -481,7 +730,8 @@ private struct RootExpandableFieldView: View {
                                 for path in preservedChildren.sorted() {
                                     if !astService.isFieldSelected(
                                         fieldName: path.split(separator: "/").last.map(String.init) ?? "",
-                                        parentPath: path.split(separator: "/").dropLast().map(String.init)
+                                        parentPath: path.split(separator: "/").dropLast().map(String.init),
+                                        segment: operationType
                                     ) {
                                         let components = path.split(separator: "/").map(String.init)
                                         if components.count >= 2 {
@@ -492,7 +742,8 @@ private struct RootExpandableFieldView: View {
                                                 parentPath: parentPath,
                                                 schema: schema,
                                                 currentQuery: tab.query,
-                                                rootTypeName: rootTypeName
+                                                rootTypeName: rootTypeName,
+                                                segment: operationType
                                             )
                                             tab.query = newQuery
                                         }
@@ -500,7 +751,7 @@ private struct RootExpandableFieldView: View {
                                 }
 
                                 // Step 3: Remove default sub-fields that weren't in the preserved set
-                                let currentChildren = astService.selectedPaths.filter { $0.hasPrefix(rootPrefix) }
+                                let currentChildren = (astService.selectedPaths[operationType] ?? []).filter { $0.hasPrefix(rootPrefix) }
                                 for path in currentChildren where !preservedChildren.contains(path) {
                                     let components = path.split(separator: "/").map(String.init)
                                     if components.count >= 2 {
@@ -511,22 +762,23 @@ private struct RootExpandableFieldView: View {
                                             parentPath: parentPath,
                                             schema: schema,
                                             currentQuery: tab.query,
-                                            rootTypeName: rootTypeName
+                                            rootTypeName: rootTypeName,
+                                            segment: operationType
                                         )
                                         tab.query = newQuery
                                     }
                                 }
                             }
                         } else {
-                            toggleAction?.toggle(field.name, [], rootTypeName)
+                            toggleAction?.toggle(field.name, [], rootTypeName, operationType)
                         }
                     }
                     expandedPaths.insert(field.name)
                 } else {
-                    // Collapsing → deselect the operation from the AST
+                    // Collapsing -> deselect the operation from the AST
                     if isSelected {
-                        astService.preserveSelections(forRoot: field.name)
-                        toggleAction?.toggle(field.name, [], rootTypeName)
+                        astService.preserveSelections(forRoot: field.name, segment: operationType)
+                        toggleAction?.toggle(field.name, [], rootTypeName, operationType)
                     }
                     expandedPaths.remove(field.name)
                 }
@@ -548,6 +800,7 @@ private struct FieldListView: View {
     let schema: GraphQLSchema
     let parentPath: [String]
     let rootTypeName: String
+    let operationType: OperationSegment
     let selectedPaths: Set<String>
     let argumentValues: [String: [String: String]]
     let isDisabled: Bool
@@ -589,6 +842,7 @@ private struct FieldListView: View {
                 fieldPath: parentPath + [field.name],
                 pathKey: pathKey,
                 rootTypeName: rootTypeName,
+                operationType: operationType,
                 showTypes: showTypes,
                 inspectableField: field,
                 args: field.args,
@@ -626,6 +880,7 @@ private struct ExplorerFieldView: View {
     let fieldPath: [String]
     let pathKey: String
     let rootTypeName: String
+    let operationType: OperationSegment
     var showTypes: Bool = false
     var inspectableField: GraphQLField? = nil
     let args: [GraphQLInputValue]
@@ -653,9 +908,11 @@ private struct ExplorerFieldView: View {
                 isDisabled: isDisabled,
                 parentPath: parentPath,
                 rootTypeName: rootTypeName,
+                operationType: operationType,
                 showTypes: showTypes,
                 inspectableField: inspectableField
             )
+            .outlineRowHighlight(.field(pathKey))
         }
     }
 
@@ -676,7 +933,8 @@ private struct ExplorerFieldView: View {
                     isDisabled: isDisabled,
                     fieldName: fieldName,
                     parentPath: parentPath,
-                    rootTypeName: rootTypeName
+                    rootTypeName: rootTypeName,
+                    operationType: operationType
                 )
             }
 
@@ -689,6 +947,7 @@ private struct ExplorerFieldView: View {
                     schema: schema,
                     parentPath: fieldPath,
                     rootTypeName: rootTypeName,
+                    operationType: operationType,
                     selectedPaths: selectedPaths,
                     argumentValues: argumentValues,
                     isDisabled: isDisabled,
@@ -709,10 +968,12 @@ private struct ExplorerFieldView: View {
                 isDisabled: isDisabled,
                 parentPath: parentPath,
                 rootTypeName: rootTypeName,
+                operationType: operationType,
                 showTypes: showTypes,
                 inspectableField: inspectableField
             )
         }
+        .outlineRowHighlight(.field(pathKey))
     }
 
     private func expandedBinding(for key: String) -> Binding<Bool> {
@@ -742,6 +1003,7 @@ private struct ArgumentRowView: View {
     let fieldName: String
     let parentPath: [String]
     var rootTypeName: String? = nil
+    var operationType: OperationSegment = .queries
 
     @State private var editText: String = ""
     @State private var localChecked: Bool = false
@@ -761,7 +1023,7 @@ private struct ArgumentRowView: View {
                     } else {
                         localChecked = false
                         editText = ""
-                        setArgAction?.setArgument(fieldName, parentPath, argName, "", rootTypeName)
+                        setArgAction?.setArgument(fieldName, parentPath, argName, "", rootTypeName, operationType)
                     }
                 }
             )) {
@@ -812,7 +1074,7 @@ private struct ArgumentRowView: View {
     private func commitValue() {
         let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed != currentValue {
-            setArgAction?.setArgument(fieldName, parentPath, argName, trimmed, rootTypeName)
+            setArgAction?.setArgument(fieldName, parentPath, argName, trimmed, rootTypeName, operationType)
         }
     }
 }

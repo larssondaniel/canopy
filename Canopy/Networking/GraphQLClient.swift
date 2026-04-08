@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 struct GraphQLClient {
 
-    func send(tab: QueryTab, environmentVariables: [String: String]? = nil) async {
+    func send(tab: QueryTab, environmentVariables: [String: String]? = nil, operationName: String? = nil) async {
         tab.lastError = nil
         tab.isLoading = true
         defer { tab.isLoading = false }
@@ -64,7 +64,7 @@ struct GraphQLClient {
         let auth = resolvedAuth.toAuthConfiguration()
         var request: URLRequest
         do {
-            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, auth: auth, headers: resolvedHeaders)
+            request = try buildRequest(url: url, method: tab.method, query: tab.query, variables: variablesObject, operationName: operationName, auth: auth, headers: resolvedHeaders)
         } catch {
             tab.lastError = "Failed to build request: \(error.localizedDescription)"
             return
@@ -108,7 +108,7 @@ struct GraphQLClient {
 
     // MARK: - Request Building
 
-    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, auth: AuthConfiguration, headers: [CodableHeader]) throws -> URLRequest {
+    func buildRequest(url: URL, method: HTTPMethod, query: String, variables: Any?, operationName: String? = nil, auth: AuthConfiguration, headers: [CodableHeader]) throws -> URLRequest {
         var request: URLRequest
 
         switch method {
@@ -120,12 +120,18 @@ struct GraphQLClient {
             if let variables {
                 body["variables"] = variables
             }
+            if let operationName {
+                body["operationName"] = operationName
+            }
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         case .get:
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
             var queryItems = components.queryItems ?? []
             queryItems.append(URLQueryItem(name: "query", value: query))
+            if let operationName {
+                queryItems.append(URLQueryItem(name: "operationName", value: operationName))
+            }
             if let variables {
                 let varsData = try JSONSerialization.data(withJSONObject: variables)
                 queryItems.append(URLQueryItem(name: "variables", value: String(data: varsData, encoding: .utf8)))

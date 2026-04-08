@@ -69,7 +69,7 @@ struct ContentView: View {
         switch appState.selectedTab {
         case .query(let id):
             if let tab = tabs.first(where: { $0.id == id }) {
-                QueryClientView(tab: tab, activeEnvironment: activeEnvironment)
+                QueryClientView(tab: tab, activeEnvironment: activeEnvironment, astService: astService)
             } else {
                 welcomeView
             }
