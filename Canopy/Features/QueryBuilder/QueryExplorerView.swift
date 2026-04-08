@@ -225,14 +225,16 @@ struct QueryExplorerView: View {
                     // During search: auto-expand sections with matches, hide sections with no matches
                     let effectivelyExpanded = hasSearchText ? (matchCount > 0) : isSectionExpanded
                     if !hasSearchText || matchCount > 0 {
-                        Section(isExpanded: Binding(
+                        DisclosureGroup(isExpanded: Binding(
                             get: { effectivelyExpanded },
                             set: { newValue in
                                 if !hasSearchText {
-                                    if newValue {
-                                        expandedSections.insert(item.segment)
-                                    } else {
-                                        expandedSections.remove(item.segment)
+                                    withAnimation {
+                                        if newValue {
+                                            expandedSections.insert(item.segment)
+                                        } else {
+                                            expandedSections.remove(item.segment)
+                                        }
                                     }
                                 }
                             }
@@ -251,7 +253,7 @@ struct QueryExplorerView: View {
                                 activeTab: activeTab,
                                 expandedPaths: $expandedPaths
                             )
-                        } header: {
+                        } label: {
                             SectionHeaderRow(
                                 segment: item.segment,
                                 fieldCount: fieldCount,
@@ -259,6 +261,16 @@ struct QueryExplorerView: View {
                                 isSearching: hasSearchText,
                                 hasSelectedFields: !selectedPaths.isEmpty
                             )
+                            .onTapGesture {
+                                guard !hasSearchText else { return }
+                                withAnimation {
+                                    if expandedSections.contains(item.segment) {
+                                        expandedSections.remove(item.segment)
+                                    } else {
+                                        expandedSections.insert(item.segment)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -405,43 +417,59 @@ private struct SectionHeaderRow: View {
     let isSearching: Bool
     let hasSelectedFields: Bool
     @SwiftUI.Environment(\.runOperationAction) private var runAction
+    @State private var isHoveringRun = false
+
+    private var countLabel: String {
+        if isSearching && matchCount > 0 {
+            "\(matchCount) of \(fieldCount)"
+        } else {
+            "\(fieldCount)"
+        }
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Image(systemName: segment.icon)
-                .foregroundStyle(segment.accentColor)
-                .frame(width: 16)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
 
             Text(segment.rawValue)
-                .fontWeight(.semibold)
+                .font(.system(.callout, weight: .semibold))
+                .foregroundStyle(.primary)
 
-            Group {
-                if isSearching && matchCount > 0 {
-                    Text("(\(matchCount) of \(fieldCount))")
-                } else {
-                    Text("(\(fieldCount))")
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Text(countLabel)
+                .font(.system(.caption2, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(.quaternary, in: Capsule())
 
-            Spacer()
+            Spacer(minLength: 4)
 
             if hasSelectedFields, let runAction {
                 Button {
                     runAction.run(segment)
                 } label: {
                     Image(systemName: "play.fill")
-                        .font(.caption2)
-                        .foregroundStyle(segment.accentColor)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(isHoveringRun ? .primary : .tertiary)
+                        .frame(width: 18, height: 18)
+                        .background(
+                            isHoveringRun ? Color.primary.opacity(0.08) : .clear,
+                            in: Circle()
+                        )
                 }
                 .buttonStyle(.plain)
-                .help("Run \(segment.rawValue.dropLast())") // "Run Query", "Run Mutation", etc.
-                .disabled(segment == .subscriptions) // Subscriptions not yet supported
+                .onHover { isHoveringRun = $0 }
+                .help("Run \(segment.rawValue.dropLast())")
+                .disabled(segment == .subscriptions)
             }
         }
-        .font(.callout)
+        .contentShape(Rectangle())
         .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(segment.rawValue), \(fieldCount) fields")
     }
 }
 
