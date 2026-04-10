@@ -192,14 +192,17 @@ final class QueryASTService {
     /// On success: updates `currentDocument`, clears `parseError`.
     /// On failure: keeps last valid AST, sets `parseError`.
     /// Skips parsing if `suppressReparse` flag is set (Explorer-driven change).
-    func parse(_ queryText: String) {
+    /// - Returns: `true` if parsing actually occurred (editor-initiated change),
+    ///   `false` if suppressed or unchanged.
+    @discardableResult
+    func parse(_ queryText: String) -> Bool {
         if suppressReparse {
             suppressReparse = false
-            return
+            return false
         }
 
         if queryText == lastPrintedQuery {
-            return
+            return false
         }
 
         let trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -208,7 +211,7 @@ final class QueryASTService {
             parseError = nil
             lastPrintedQuery = nil
             rebuildSelectedPaths()
-            return
+            return true
         }
 
         do {
@@ -216,9 +219,11 @@ final class QueryASTService {
             currentDocument = document
             parseError = nil
             rebuildSelectedPaths()
+            return true
         } catch {
             // Keep last valid AST, set error
             parseError = error.localizedDescription
+            return false
         }
     }
 

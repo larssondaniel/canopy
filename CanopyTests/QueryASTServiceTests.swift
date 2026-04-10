@@ -824,4 +824,70 @@ struct QueryASTServiceTests {
         // Should still add the field (just won't know it returns User)
         #expect(result.contains("createUser"))
     }
+
+    // MARK: - parse() Return Value Tests
+
+    @Test("parse returns true for editor-initiated parse")
+    func parseReturnsTrueForEditorParse() {
+        let service = QueryASTService()
+        let didParse = service.parse("{ user { id } }")
+        #expect(didParse == true)
+        #expect(service.currentDocument != nil)
+    }
+
+    @Test("parse returns true for empty/whitespace text (clears state)")
+    func parseReturnsTrueForEmptyText() {
+        let service = QueryASTService()
+        service.parse("{ user { id } }")
+        let didParse = service.parse("  ")
+        #expect(didParse == true)
+        #expect(service.currentDocument == nil)
+    }
+
+    @Test("parse returns false when suppressReparse is set")
+    func parseReturnsFalseWhenSuppressed() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+        service.parse("{ version }")
+
+        // toggleField sets suppressReparse internally
+        let result = service.toggleField(
+            fieldName: "user",
+            parentPath: [],
+            schema: schema,
+            currentQuery: "{ version }"
+        )
+
+        let didParse = service.parse(result)
+        #expect(didParse == false)
+    }
+
+    @Test("parse returns false for lastPrintedQuery match")
+    func parseReturnsFalseForLastPrintedQueryMatch() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // toggleField from empty creates a query and sets lastPrintedQuery
+        let result = service.toggleField(
+            fieldName: "version",
+            parentPath: [],
+            schema: schema,
+            currentQuery: ""
+        )
+
+        // First parse is suppressed (suppressReparse)
+        _ = service.parse(result)
+
+        // Second parse with same text hits lastPrintedQuery guard
+        let didParse = service.parse(result)
+        #expect(didParse == false)
+    }
+
+    @Test("parse returns false for invalid syntax")
+    func parseReturnsFalseForInvalidSyntax() {
+        let service = QueryASTService()
+        let didParse = service.parse("{ invalid {{")
+        #expect(didParse == false)
+        #expect(service.parseError != nil)
+    }
 }
