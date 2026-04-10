@@ -50,6 +50,8 @@ struct QueryExplorerView: View {
     @State private var preSearchExpandState: (paths: Set<String>, sections: Set<OperationSegment>)?
     /// Currently focused row for keyboard navigation.
     @State private var focusedRow: OutlineRowID?
+    /// Currently hovered row for hover highlight.
+    @State private var hoveredRow: OutlineRowID?
     /// Keyboard focus state for the sidebar list.
     @FocusState private var isSidebarFocused: Bool
 
@@ -73,7 +75,10 @@ struct QueryExplorerView: View {
         .task(id: activeTab?.query) {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            astService.parse(activeTab?.query ?? "")
+            let didParse = astService.parse(activeTab?.query ?? "")
+            if didParse {
+                syncExpandStateFromAST()
+            }
         }
         .onChange(of: debouncedSearchText) { oldValue, newValue in
             if oldValue.isEmpty && !newValue.isEmpty {
@@ -283,9 +288,13 @@ struct QueryExplorerView: View {
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, 22)
             .environment(\.focusedOutlineRow, focusedRow)
+            .environment(\.hoveredOutlineRow, hoveredRow)
             .environment(\.setFocusedRowAction, SetFocusedRowAction { row in
                 focusedRow = row
                 isSidebarFocused = true
+            })
+            .environment(\.setHoveredRowAction, SetHoveredRowAction { row in
+                hoveredRow = row
             })
             .environment(\.toggleFieldAction, toggleAction)
             .environment(\.setArgumentAction, setArgAction)
@@ -334,6 +343,34 @@ struct QueryExplorerView: View {
         .sheet(isPresented: $showTypeBrowser) {
             TypeBrowserSheet()
         }
+    }
+
+    // MARK: - Editor → Sidebar Sync
+
+    /// After an editor-initiated parse, expand sidebar nodes to reveal selected fields.
+    /// Only adds to expand state — never auto-collapses.
+    private func syncExpandStateFromAST() {
+        var pathsToExpand: Set<String> = []
+        for (_, paths) in astService.selectedPaths {
+            for path in paths {
+                let components = path.split(separator: "/")
+                // Expand root field and all intermediate ancestor paths
+                for i in 1...components.count {
+                    pathsToExpand.insert(components.prefix(i).joined(separator: "/"))
+                }
+            }
+        }
+
+        var sectionsToExpand: Set<OperationSegment> = []
+        for (segment, paths) in astService.selectedPaths where !paths.isEmpty {
+            sectionsToExpand.insert(segment)
+        }
+
+        // Only ADD — never auto-collapse
+        let newPaths = expandedPaths.union(pathsToExpand)
+        let newSections = expandedSections.union(sectionsToExpand)
+        if newPaths != expandedPaths { expandedPaths = newPaths }
+        if newSections != expandedSections { expandedSections = newSections }
     }
 
     // MARK: - Search Helpers
@@ -435,11 +472,92 @@ struct QueryExplorerView: View {
                     expandedSections.insert(segment)
                 }
             }
-        case .operation(_, let fieldName):
+        case .operation(let segment, let fieldName):
+            guard let tab = activeTab else { return }
+            let segments = availableSegments(for: schema)
+            guard let segmentData = segments.first(where: { $0.segment == segment }) else { return }
+            let isSelected = astService.isFieldSelected(fieldName: fieldName, parentPath: [], segment: segment)
+
             withAnimation {
                 if expandedPaths.contains(fieldName) {
+                    // Collapsing: preserve selections, then deselect from AST
+                    if isSelected {
+                        astService.preserveSelections(forRoot: fieldName, segment: segment)
+                        let newQuery = astService.toggleField(
+                            fieldName: fieldName,
+                            parentPath: [],
+                            schema: schema,
+                            currentQuery: tab.query,
+                            rootTypeName: segmentData.typeName,
+                            segment: segment
+                        )
+                        tab.query = newQuery
+                    }
                     expandedPaths.remove(fieldName)
                 } else {
+                    // Expanding: select in AST, restore preserved selections if any
+                    if !isSelected {
+                        if let preserved = astService.restoreSelections(forRoot: fieldName, segment: segment) {
+                            let newQuery = astService.toggleField(
+                                fieldName: fieldName,
+                                parentPath: [],
+                                schema: schema,
+                                currentQuery: tab.query,
+                                rootTypeName: segmentData.typeName,
+                                segment: segment
+                            )
+                            tab.query = newQuery
+
+                            let rootPrefix = fieldName + "/"
+                            let preservedChildren = preserved.filter { $0.hasPrefix(rootPrefix) }
+                            for path in preservedChildren.sorted() {
+                                let components = path.split(separator: "/").map(String.init)
+                                if components.count >= 2 {
+                                    let childField = components.last!
+                                    let parentPath = Array(components.dropLast())
+                                    if !astService.isFieldSelected(fieldName: childField, parentPath: parentPath, segment: segment) {
+                                        let q = astService.toggleField(
+                                            fieldName: childField,
+                                            parentPath: parentPath,
+                                            schema: schema,
+                                            currentQuery: tab.query,
+                                            rootTypeName: segmentData.typeName,
+                                            segment: segment
+                                        )
+                                        tab.query = q
+                                    }
+                                }
+                            }
+
+                            let currentChildren = (astService.selectedPaths[segment] ?? []).filter { $0.hasPrefix(rootPrefix) }
+                            for path in currentChildren where !preservedChildren.contains(path) {
+                                let components = path.split(separator: "/").map(String.init)
+                                if components.count >= 2 {
+                                    let childField = components.last!
+                                    let parentPath = Array(components.dropLast())
+                                    let q = astService.toggleField(
+                                        fieldName: childField,
+                                        parentPath: parentPath,
+                                        schema: schema,
+                                        currentQuery: tab.query,
+                                        rootTypeName: segmentData.typeName,
+                                        segment: segment
+                                    )
+                                    tab.query = q
+                                }
+                            }
+                        } else {
+                            let newQuery = astService.toggleField(
+                                fieldName: fieldName,
+                                parentPath: [],
+                                schema: schema,
+                                currentQuery: tab.query,
+                                rootTypeName: segmentData.typeName,
+                                segment: segment
+                            )
+                            tab.query = newQuery
+                        }
+                    }
                     expandedPaths.insert(fieldName)
                 }
             }
@@ -479,6 +597,7 @@ private struct SectionHeaderRow: View {
     let hasSelectedFields: Bool
     @SwiftUI.Environment(\.runOperationAction) private var runAction
     @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
+    @SwiftUI.Environment(\.setHoveredRowAction) private var setHoverAction
     @State private var isHoveringRun = false
 
     private var countLabel: String {
@@ -529,6 +648,9 @@ private struct SectionHeaderRow: View {
             }
         }
         .contentShape(Rectangle())
+        .onHover { hovering in
+            setHoverAction?.setHover(hovering ? .section(segment) : nil)
+        }
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(segment.rawValue), \(fieldCount) fields")
@@ -1045,10 +1167,14 @@ private struct ArgumentRowView: View {
                 TextField("value", text: $editText)
                     .textFieldStyle(.plain)
                     .font(.system(.caption, design: .monospaced))
-                    .frame(maxWidth: 100)
+                    .frame(minWidth: 60)
                     .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 3))
+                    .padding(.vertical, 2)
+                    .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isFocused ? Color.accentColor.opacity(0.5) : .clear, lineWidth: 1)
+                    )
                     .focused($isFocused)
                     .onSubmit { commitValue() }
                     .onChange(of: isFocused) { _, focused in
@@ -1057,7 +1183,7 @@ private struct ArgumentRowView: View {
             }
         }
         .font(.system(.caption, design: .monospaced))
-        .padding(.leading, 8)
+        .listRowBackground(Color.clear)
         .task(id: currentValue) {
             if !isFocused {
                 editText = currentValue

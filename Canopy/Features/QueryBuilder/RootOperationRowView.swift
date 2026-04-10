@@ -39,6 +39,7 @@ struct RootOperationRowView: View {
 
     @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
     @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
+    @SwiftUI.Environment(\.setHoveredRowAction) private var setHoverAction
 
     var body: some View {
         HStack(spacing: 4) {
@@ -57,6 +58,9 @@ struct RootOperationRowView: View {
         }
         .font(.system(size: 12))
         .contentShape(Rectangle())
+        .onHover { hovering in
+            setHoverAction?.setHover(hovering ? .operation(operationType, fieldName) : nil)
+        }
         .accessibilityLabel("\(fieldName)\(isSelected ? ", selected" : "")")
         .accessibilityHint("Click to \(isSelected ? "deselect" : "select")")
         .contextMenu {

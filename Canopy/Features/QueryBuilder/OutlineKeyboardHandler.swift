@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Identifies a row in the sidebar outline for focus tracking.
@@ -13,23 +14,32 @@ struct SetFocusedRowAction {
     let setFocus: (OutlineRowID) -> Void
 }
 
+struct SetHoveredRowAction {
+    let setHover: (OutlineRowID?) -> Void
+}
+
 extension EnvironmentValues {
     @Entry var focusedOutlineRow: OutlineRowID? = nil
+    @Entry var hoveredOutlineRow: OutlineRowID? = nil
     @Entry var setFocusedRowAction: SetFocusedRowAction? = nil
+    @Entry var setHoveredRowAction: SetHoveredRowAction? = nil
     /// True when the current row is keyboard-focused (children should use white text).
     @Entry var isRowHighlighted: Bool = false
 }
 
-/// View modifier that highlights an entire List row (including chevron) when focused.
+/// View modifier that highlights an entire List row (including chevron) when focused or hovered.
 /// Uses `.listRowBackground()` to span the full row width, Xcode-style.
 struct OutlineRowHighlight: ViewModifier {
     let rowID: OutlineRowID
     @SwiftUI.Environment(\.focusedOutlineRow) private var focusedRow
+    @SwiftUI.Environment(\.hoveredOutlineRow) private var hoveredRow
 
     private var isFocused: Bool { focusedRow == rowID }
+    private var isHovered: Bool { hoveredRow == rowID }
 
     /// Xcode-style selection blue: slightly darker and more muted than the default accent.
     private static let selectionColor = Color(nsColor: NSColor.controlAccentColor).opacity(0.85)
+    private static let hoverColor = Color.primary.opacity(0.06)
 
     func body(content: Content) -> some View {
         content
@@ -40,7 +50,12 @@ struct OutlineRowHighlight: ViewModifier {
                         .fill(Self.selectionColor)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                    : nil
+                    : isHovered
+                        ? RoundedRectangle(cornerRadius: 7)
+                            .fill(Self.hoverColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                        : nil
             )
     }
 }
@@ -72,7 +87,15 @@ struct OutlineKeyboardModifier: ViewModifier {
             }
     }
 
+    /// True when an AppKit text field/editor is the first responder (e.g. argument input).
+    private var isTextFieldActive: Bool {
+        NSApp.keyWindow?.firstResponder is NSText
+    }
+
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        // Let text fields handle their own input
+        if isTextFieldActive { return .ignored }
+
         // Cmd+F: focus search
         if press.key == .init("f") && press.modifiers.contains(.command) {
             searchText = searchText // trigger focus (handled by .searchable)

@@ -22,6 +22,7 @@ struct QueryFieldRowView: View {
     @SwiftUI.Environment(\.toggleFieldAction) private var toggleAction
     @SwiftUI.Environment(\.inspectFieldAction) private var inspectAction
     @SwiftUI.Environment(\.setFocusedRowAction) private var setFocusAction
+    @SwiftUI.Environment(\.setHoveredRowAction) private var setHoverAction
     @SwiftUI.Environment(\.isRowHighlighted) private var isHighlighted
 
     private var pathKey: String {
@@ -75,6 +76,9 @@ struct QueryFieldRowView: View {
         }
         .font(.system(size: 12))
         .contentShape(Rectangle())
+        .onHover { hovering in
+            setHoverAction?.setHover(hovering ? .field(pathKey) : nil)
+        }
         .onTapGesture {
             setFocusAction?.setFocus(.field(pathKey))
         }
