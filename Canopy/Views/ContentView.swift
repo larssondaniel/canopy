@@ -16,73 +16,48 @@ struct ContentView: View {
     }
 
     private var activeQueryTab: QueryTab? {
-        guard let queryID = appState.selectedTab?.queryID else { return nil }
-        return tabs.first { $0.id == queryID }
+        tabs.first
     }
 
     var body: some View {
+        @Bindable var appState = appState
+
         NavigationSplitView {
             Sidebar(activeTab: activeQueryTab, astService: astService)
         } detail: {
-            VStack(spacing: 0) {
-                // Tab bar — shown when 2+ tabs are open
-                if appState.openTabs.count >= 2 {
-                    TabBarView()
-                }
-
-                // Content area — routes based on selected tab type
-                contentForSelectedTab
-            }
-            .toolbar {
-                // '+' button in toolbar when tab bar is hidden (0-1 tabs)
-                if appState.openTabs.count < 2 {
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            appState.addTab()
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .help("New Tab")
-                    }
-                }
-
-                ToolbarItem(placement: .automatic) {
-                    EnvironmentPicker()
-                }
+            if let tab = activeQueryTab {
+                QueryClientView(tab: tab, activeEnvironment: activeEnvironment, astService: astService)
+            } else {
+                ContentUnavailableView("No Query", systemImage: "arrow.right.circle", description: Text("Loading..."))
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                EnvironmentPicker()
+            }
+        }
+        .sheet(isPresented: $appState.showEnvironments) {
+            EnvironmentContentView()
+                .frame(minWidth: 600, minHeight: 400)
+        }
         .onAppear {
             appState.modelContext = modelContext
-            appState.initializeTabs(from: tabs)
+            _ = appState.ensureQueryTab()
         }
-        .onChange(of: appState.selectedTab) { _, newTab in
-            updateActiveEndpoint(for: newTab)
+        .onChange(of: activeQueryTab?.endpoint) { _, _ in
+            updateActiveEndpoint()
         }
         .onChange(of: activeStates.first?.activeEnvironmentID) { _, _ in
-            updateActiveEndpoint(for: appState.selectedTab)
+            updateActiveEndpoint()
+        }
+        .onAppear {
+            updateActiveEndpoint()
         }
     }
 
-    @ViewBuilder
-    private var contentForSelectedTab: some View {
-        switch appState.selectedTab {
-        case .query(let id):
-            if let tab = tabs.first(where: { $0.id == id }) {
-                QueryClientView(tab: tab, activeEnvironment: activeEnvironment, astService: astService)
-            } else {
-                welcomeView
-            }
-        case .environments:
-            EnvironmentContentView()
-        case nil:
-            welcomeView
-        }
-    }
-
-    private func updateActiveEndpoint(for tab: ContentTab?) {
-        guard let queryID = tab?.queryID,
-              let queryTab = tabs.first(where: { $0.id == queryID }) else {
+    private func updateActiveEndpoint() {
+        guard let queryTab = activeQueryTab else {
             schemaStore.setActiveEndpoint(nil)
             return
         }
@@ -106,31 +81,11 @@ struct ContentView: View {
             headers: queryTab.headers
         )
 
-        // Auto-load schema from cache (or fetch if needed) when endpoint becomes active
         schemaStore.fetchSchema(
             endpoint: resolved,
             method: queryTab.method,
             auth: queryTab.authConfig.toAuthConfiguration(),
             headers: queryTab.headers
         )
-    }
-
-    @ViewBuilder
-    private var welcomeView: some View {
-        VStack(spacing: 12) {
-            Text("Canopy")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-            Text("A native GraphQL client for macOS")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            Button("New Tab") {
-                appState.addTab()
-            }
-            .controlSize(.large)
-            Text("or press \(Image(systemName: "command")) T")
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

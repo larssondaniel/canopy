@@ -50,7 +50,7 @@ struct EnvironmentPicker: View {
             Divider()
 
             Button("Manage Environments...") {
-                appState.openEnvironmentsTab()
+                appState.showEnvironments = true
             }
         } label: {
             pillLabel
