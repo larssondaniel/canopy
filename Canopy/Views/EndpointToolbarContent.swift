@@ -1,14 +1,27 @@
 import SwiftUI
 
-struct RunCancelButton: View {
-    var isLoading: Bool
+struct EndpointToolbarContent: View {
+    @Bindable var tab: QueryTab
+    var activeEnvironment: AppEnvironment?
     var hasUnresolved: Bool
     var runButtonTooltip: String
     var onRun: () -> Void
     var onCancel: () -> Void
 
     var body: some View {
-        if isLoading {
+        HStack(spacing: 8) {
+            runCancelButton
+            methodMenu
+            urlField
+            shortcutHint
+        }
+    }
+
+    // MARK: - Run / Cancel
+
+    @ViewBuilder
+    private var runCancelButton: some View {
+        if tab.isLoading {
             Button { onCancel() } label: {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 12))
@@ -31,18 +44,8 @@ struct RunCancelButton: View {
             .help(runButtonTooltip)
         }
     }
-}
 
-struct EndpointToolbarContent: View {
-    @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            methodMenu
-            urlField
-        }
-    }
+    // MARK: - HTTP Method
 
     @ViewBuilder
     private var methodMenu: some View {
@@ -64,6 +67,8 @@ struct EndpointToolbarContent: View {
         }
     }
 
+    // MARK: - URL Field
+
     @ViewBuilder
     private var urlField: some View {
         let field = TemplateTextField(
@@ -72,12 +77,20 @@ struct EndpointToolbarContent: View {
             activeEnvironment: activeEnvironment
         )
         .font(.system(size: 12, design: .monospaced))
-        .frame(minWidth: 200, maxWidth: .infinity)
+        .frame(minWidth: 300, maxWidth: 600)
 
         if #available(macOS 26.0, *) {
             field.glassEffect(.identity)
         } else {
             field
         }
+    }
+
+    // MARK: - Shortcut Hint
+
+    private var shortcutHint: some View {
+        Text("⌘⏎")
+            .foregroundStyle(.tertiary)
+            .font(.system(size: 11))
     }
 }
