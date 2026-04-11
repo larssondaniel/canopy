@@ -169,7 +169,7 @@ struct OutlineKeyboardModifier: ViewModifier {
             return .ignored
         case .operation(let segment, let fieldName):
             if expandedPaths.contains(fieldName) {
-                expandedPaths.remove(fieldName)
+                toggleRow(row)
                 return .handled
             }
             // Already collapsed — jump to parent section
@@ -233,7 +233,7 @@ struct OutlineKeyboardModifier: ViewModifier {
             return .ignored
         case .operation(_, let fieldName):
             if !expandedPaths.contains(fieldName) {
-                expandedPaths.insert(fieldName)
+                toggleRow(row)
                 return .handled
             }
             return .ignored
@@ -244,7 +244,7 @@ struct OutlineKeyboardModifier: ViewModifier {
             }
             return .ignored
         case .argument:
-            return .ignored // Arguments don't expand/collapse
+            return .ignored
         }
     }
 }
