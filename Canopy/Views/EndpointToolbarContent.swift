@@ -10,20 +10,22 @@ struct RunCancelButton: View {
     var body: some View {
         if isLoading {
             Button { onCancel() } label: {
-                Label("Cancel", systemImage: "stop.fill")
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 26)
             }
-            .labelStyle(.iconOnly)
             .buttonStyle(.borderedProminent)
             .tint(.red)
-            .controlSize(.small)
+            .clipShape(Circle())
             .keyboardShortcut(.escape, modifiers: [])
         } else {
             Button { onRun() } label: {
-                Label("Run", systemImage: "play.fill")
+                Image(systemName: "play.fill")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 26)
             }
-            .labelStyle(.iconOnly)
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .clipShape(Circle())
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(hasUnresolved)
             .help(runButtonTooltip)
