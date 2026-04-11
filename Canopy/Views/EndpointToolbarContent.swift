@@ -1,28 +1,16 @@
 import SwiftUI
 
-struct EndpointToolbarContent: View {
-    @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+// MARK: - Run / Cancel Button (isolated in its own ToolbarItem)
+
+struct RunCancelButton: View {
+    var isLoading: Bool
     var hasUnresolved: Bool
     var runButtonTooltip: String
     var onRun: () -> Void
     var onCancel: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            runCancelButton
-            methodMenu
-            urlField
-            shortcutHint
-        }
-        .tint(nil)
-    }
-
-    // MARK: - Run / Cancel
-
-    @ViewBuilder
-    private var runCancelButton: some View {
-        if tab.isLoading {
+        if isLoading {
             Button { onCancel() } label: {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 12))
@@ -39,15 +27,27 @@ struct EndpointToolbarContent: View {
                     .frame(width: 26, height: 26)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.blue)
             .clipShape(Circle())
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(hasUnresolved)
             .help(runButtonTooltip)
         }
     }
+}
 
-    // MARK: - HTTP Method
+// MARK: - Method + URL (in .principal ToolbarItem)
+
+struct EndpointToolbarContent: View {
+    @Bindable var tab: QueryTab
+    var activeEnvironment: AppEnvironment?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            methodMenu
+            urlField
+            shortcutHint
+        }
+    }
 
     @ViewBuilder
     private var methodMenu: some View {
@@ -69,8 +69,6 @@ struct EndpointToolbarContent: View {
         }
     }
 
-    // MARK: - URL Field
-
     @ViewBuilder
     private var urlField: some View {
         let field = TemplateTextField(
@@ -87,8 +85,6 @@ struct EndpointToolbarContent: View {
             field
         }
     }
-
-    // MARK: - Shortcut Hint
 
     private var shortcutHint: some View {
         Text("⌘⏎")
