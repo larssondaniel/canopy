@@ -37,66 +37,57 @@ struct ContentView: View {
             run(segment: segment)
         })
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                if let tab = activeQueryTab {
-                    if tab.isLoading {
-                        Button { cancel() } label: {
-                            Label("Cancel", systemImage: "stop.fill")
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                        .controlSize(.small)
-                        .keyboardShortcut(.escape, modifiers: [])
-                    } else {
-                        Button { run() } label: {
-                            Label("Run", systemImage: "play.fill")
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(hasUnresolved)
-                        .help(runButtonTooltip)
-                    }
-                }
-            }
-
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .principal) {
                 if let tab = activeQueryTab {
                     @Bindable var tab = tab
-                    Menu {
-                        ForEach(HTTPMethod.allCases, id: \.self) { method in
-                            Button(method.rawValue) { tab.method = method }
+                    HStack(spacing: 8) {
+                        // Run / Cancel button
+                        if tab.isLoading {
+                            Button { cancel() } label: {
+                                Label("Cancel", systemImage: "stop.fill")
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                            .controlSize(.small)
+                            .keyboardShortcut(.escape, modifiers: [])
+                        } else {
+                            Button { run() } label: {
+                                Label("Run", systemImage: "play.fill")
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .disabled(hasUnresolved)
+                            .help(runButtonTooltip)
                         }
-                    } label: {
-                        Text(tab.method.rawValue)
+
+                        // HTTP Method selector
+                        Menu {
+                            ForEach(HTTPMethod.allCases, id: \.self) { method in
+                                Button(method.rawValue) { tab.method = method }
+                            }
+                        } label: {
+                            Text(tab.method.rawValue)
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+
+                        // URL field
+                        TemplateTextField(
+                            text: $tab.endpoint,
+                            placeholder: "https://example.com/graphql",
+                            activeEnvironment: activeEnvironment
+                        )
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(minWidth: 200, maxWidth: .infinity)
+
+                        // Environment picker
+                        EnvironmentPicker()
                     }
-                    .menuStyle(.borderlessButton)
                 }
-            }
-
-            ToolbarItem(placement: .automatic) {
-                if let tab = activeQueryTab {
-                    @Bindable var tab = tab
-                    TemplateTextField(
-                        text: $tab.endpoint,
-                        placeholder: "https://example.com/graphql",
-                        activeEnvironment: activeEnvironment
-                    )
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(minWidth: 200, idealWidth: 400, maxWidth: .infinity)
-                }
-            }
-
-            ToolbarItem(placement: .automatic) {
-                Text("⌘⏎")
-                    .foregroundStyle(.tertiary)
-                    .font(.system(size: 11))
-            }
-
-            ToolbarItem(placement: .automatic) {
-                EnvironmentPicker()
             }
         }
         .sheet(isPresented: $appState.showEnvironments) {
