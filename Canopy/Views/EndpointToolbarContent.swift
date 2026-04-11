@@ -15,6 +15,7 @@ struct EndpointToolbarContent: View {
             urlField
             shortcutHint
         }
+        .tint(nil)
     }
 
     // MARK: - Run / Cancel
@@ -38,6 +39,7 @@ struct EndpointToolbarContent: View {
                     .frame(width: 26, height: 26)
             }
             .buttonStyle(.borderedProminent)
+            .tint(.blue)
             .clipShape(Circle())
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(hasUnresolved)
