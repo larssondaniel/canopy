@@ -9,6 +9,7 @@ struct ContentView: View {
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
     @Query private var activeStates: [ActiveEnvironmentState]
     @State private var astService = QueryASTService()
+    private let client = GraphQLClient()
 
     private var activeEnvironment: AppEnvironment? {
         guard let activeID = activeStates.first?.activeEnvironmentID else { return nil }
@@ -32,6 +33,9 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
+        .environment(\.runOperationAction, RunOperationAction { segment in
+            run(segment: segment)
+        })
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 EnvironmentPicker()
@@ -54,6 +58,52 @@ struct ContentView: View {
         .onAppear {
             updateActiveEndpoint()
         }
+    }
+
+    // MARK: - Run / Cancel
+
+    private func run(segment: OperationSegment? = nil) {
+        guard let tab = activeQueryTab else { return }
+        tab.currentTask?.cancel()
+        tab.currentTask = Task {
+            let operationName: String?
+            if let doc = astService.currentDocument,
+               doc.definitions.count > 1 {
+                let targetSegment = segment ?? astService.activeSegment ?? .queries
+                switch targetSegment {
+                case .queries: operationName = "Query"
+                case .mutations: operationName = "Mutation"
+                case .subscriptions: operationName = "Subscription"
+                }
+            } else {
+                operationName = nil
+            }
+
+            await client.send(tab: tab, environmentVariables: activeEnvironment?.variables, operationName: operationName)
+
+            if tab.lastError == nil, tab.responseStatusCode != nil {
+                let endpoint: String
+                if let envVars = activeEnvironment?.variables {
+                    endpoint = TemplateEngine.substitute(in: tab.endpoint, variables: envVars).resolvedText
+                } else {
+                    endpoint = tab.endpoint
+                }
+
+                schemaStore.setActiveEndpoint(
+                    endpoint,
+                    method: tab.method,
+                    auth: tab.authConfig.toAuthConfiguration(),
+                    headers: tab.headers
+                )
+                schemaStore.fetchSchema(endpoint: endpoint)
+            }
+        }
+    }
+
+    private func cancel() {
+        guard let tab = activeQueryTab else { return }
+        tab.currentTask?.cancel()
+        tab.isLoading = false
     }
 
     private func updateActiveEndpoint() {
