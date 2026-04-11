@@ -108,6 +108,12 @@ struct QueryExplorerView: View {
             guard let endpoint = schemaStore.activeEndpoint else { return }
             expandedSections = ExpandStateStore.loadExpandedSections(for: endpoint)
             expandedPaths = ExpandStateStore.loadExpandedPaths(for: endpoint)
+            astService.preservedSelections = ExpandStateStore.loadPreservedSelections(for: endpoint)
+        }
+        .onChange(of: astService.preservedSelections) { _, newValue in
+            if let endpoint = schemaStore.activeEndpoint {
+                ExpandStateStore.savePreservedSelections(newValue, for: endpoint)
+            }
         }
     }
 
@@ -347,13 +353,17 @@ struct QueryExplorerView: View {
 
     // MARK: - Editor → Sidebar Sync
 
-    /// After an editor-initiated parse, expand sidebar nodes to reveal selected fields.
-    /// Only adds to expand state — never auto-collapses.
+    /// After an editor-initiated parse, sync sidebar expand state with the AST.
+    /// Expands nodes for selected fields and collapses root operations that are no longer selected.
     private func syncExpandStateFromAST() {
         var pathsToExpand: Set<String> = []
+        var selectedRoots: Set<String> = []
         for (_, paths) in astService.selectedPaths {
             for path in paths {
                 let components = path.split(separator: "/")
+                if let root = components.first {
+                    selectedRoots.insert(String(root))
+                }
                 // Expand root field and all intermediate ancestor paths
                 for i in 1...components.count {
                     pathsToExpand.insert(components.prefix(i).joined(separator: "/"))
@@ -366,8 +376,16 @@ struct QueryExplorerView: View {
             sectionsToExpand.insert(segment)
         }
 
-        // Only ADD — never auto-collapse
-        let newPaths = expandedPaths.union(pathsToExpand)
+        // Add paths for selected fields
+        var newPaths = expandedPaths.union(pathsToExpand)
+
+        // Collapse root operations that are no longer selected in the AST
+        // (e.g., user deleted the query text in the editor)
+        let rootExpandedPaths = expandedPaths.filter { !$0.contains("/") }
+        for root in rootExpandedPaths where !selectedRoots.contains(root) {
+            newPaths.remove(root)
+        }
+
         let newSections = expandedSections.union(sectionsToExpand)
         if newPaths != expandedPaths { expandedPaths = newPaths }
         if newSections != expandedSections { expandedSections = newSections }
@@ -480,83 +498,29 @@ struct QueryExplorerView: View {
 
             withAnimation {
                 if expandedPaths.contains(fieldName) {
-                    // Collapsing: preserve selections, then deselect from AST
+                    // Collapsing
                     if isSelected {
-                        astService.preserveSelections(forRoot: fieldName, segment: segment)
-                        let newQuery = astService.toggleField(
+                        let newQuery = astService.collapseRoot(
                             fieldName: fieldName,
-                            parentPath: [],
+                            segment: segment,
                             schema: schema,
                             currentQuery: tab.query,
-                            rootTypeName: segmentData.typeName,
-                            segment: segment
+                            rootTypeName: segmentData.typeName
                         )
                         tab.query = newQuery
                     }
                     expandedPaths.remove(fieldName)
                 } else {
-                    // Expanding: select in AST, restore preserved selections if any
+                    // Expanding
                     if !isSelected {
-                        if let preserved = astService.restoreSelections(forRoot: fieldName, segment: segment) {
-                            let newQuery = astService.toggleField(
-                                fieldName: fieldName,
-                                parentPath: [],
-                                schema: schema,
-                                currentQuery: tab.query,
-                                rootTypeName: segmentData.typeName,
-                                segment: segment
-                            )
-                            tab.query = newQuery
-
-                            let rootPrefix = fieldName + "/"
-                            let preservedChildren = preserved.filter { $0.hasPrefix(rootPrefix) }
-                            for path in preservedChildren.sorted() {
-                                let components = path.split(separator: "/").map(String.init)
-                                if components.count >= 2 {
-                                    let childField = components.last!
-                                    let parentPath = Array(components.dropLast())
-                                    if !astService.isFieldSelected(fieldName: childField, parentPath: parentPath, segment: segment) {
-                                        let q = astService.toggleField(
-                                            fieldName: childField,
-                                            parentPath: parentPath,
-                                            schema: schema,
-                                            currentQuery: tab.query,
-                                            rootTypeName: segmentData.typeName,
-                                            segment: segment
-                                        )
-                                        tab.query = q
-                                    }
-                                }
-                            }
-
-                            let currentChildren = (astService.selectedPaths[segment] ?? []).filter { $0.hasPrefix(rootPrefix) }
-                            for path in currentChildren where !preservedChildren.contains(path) {
-                                let components = path.split(separator: "/").map(String.init)
-                                if components.count >= 2 {
-                                    let childField = components.last!
-                                    let parentPath = Array(components.dropLast())
-                                    let q = astService.toggleField(
-                                        fieldName: childField,
-                                        parentPath: parentPath,
-                                        schema: schema,
-                                        currentQuery: tab.query,
-                                        rootTypeName: segmentData.typeName,
-                                        segment: segment
-                                    )
-                                    tab.query = q
-                                }
-                            }
-                        } else {
-                            let newQuery = astService.toggleField(
-                                fieldName: fieldName,
-                                parentPath: [],
-                                schema: schema,
-                                currentQuery: tab.query,
-                                rootTypeName: segmentData.typeName,
-                                segment: segment
-                            )
-                            tab.query = newQuery
-                        }
+                        let newQuery = astService.expandRoot(
+                            fieldName: fieldName,
+                            segment: segment,
+                            schema: schema,
+                            currentQuery: tab.query,
+                            rootTypeName: segmentData.typeName
+                        )
+                        tab.query = newQuery
                     }
                     expandedPaths.insert(fieldName)
                 }
@@ -831,7 +795,7 @@ private struct RootExpandableFieldView: View {
         }
     }
 
-    /// Unified binding: expanding = select in AST, collapsing = deselect from AST.
+    /// Unified binding: expanding = select in AST via expandRoot, collapsing = deselect via collapseRoot.
     private var rootExpandedBinding: Binding<Bool> {
         Binding(
             get: { expandedPaths.contains(field.name) },
@@ -839,68 +803,27 @@ private struct RootExpandableFieldView: View {
                 guard !isDisabled else { return }
 
                 if newValue {
-                    // Expanding -> select the operation in the AST
-                    if !isSelected {
-                        if let preserved = astService.restoreSelections(forRoot: field.name, segment: operationType) {
-                            // Step 1: Add the root (which auto-adds a default sub-selection)
-                            toggleAction?.toggle(field.name, [], rootTypeName, operationType)
-                            if let tab = activeTab {
-                                let rootPrefix = field.name + "/"
-                                let preservedChildren = preserved.filter { $0.hasPrefix(rootPrefix) }
-
-                                // Step 2: Add preserved children that aren't already selected
-                                for path in preservedChildren.sorted() {
-                                    if !astService.isFieldSelected(
-                                        fieldName: path.split(separator: "/").last.map(String.init) ?? "",
-                                        parentPath: path.split(separator: "/").dropLast().map(String.init),
-                                        segment: operationType
-                                    ) {
-                                        let components = path.split(separator: "/").map(String.init)
-                                        if components.count >= 2 {
-                                            let childField = components.last!
-                                            let parentPath = Array(components.dropLast())
-                                            let newQuery = astService.toggleField(
-                                                fieldName: childField,
-                                                parentPath: parentPath,
-                                                schema: schema,
-                                                currentQuery: tab.query,
-                                                rootTypeName: rootTypeName,
-                                                segment: operationType
-                                            )
-                                            tab.query = newQuery
-                                        }
-                                    }
-                                }
-
-                                // Step 3: Remove default sub-fields that weren't in the preserved set
-                                let currentChildren = (astService.selectedPaths[operationType] ?? []).filter { $0.hasPrefix(rootPrefix) }
-                                for path in currentChildren where !preservedChildren.contains(path) {
-                                    let components = path.split(separator: "/").map(String.init)
-                                    if components.count >= 2 {
-                                        let childField = components.last!
-                                        let parentPath = Array(components.dropLast())
-                                        let newQuery = astService.toggleField(
-                                            fieldName: childField,
-                                            parentPath: parentPath,
-                                            schema: schema,
-                                            currentQuery: tab.query,
-                                            rootTypeName: rootTypeName,
-                                            segment: operationType
-                                        )
-                                        tab.query = newQuery
-                                    }
-                                }
-                            }
-                        } else {
-                            toggleAction?.toggle(field.name, [], rootTypeName, operationType)
-                        }
+                    if !isSelected, let tab = activeTab {
+                        let newQuery = astService.expandRoot(
+                            fieldName: field.name,
+                            segment: operationType,
+                            schema: schema,
+                            currentQuery: tab.query,
+                            rootTypeName: rootTypeName
+                        )
+                        tab.query = newQuery
                     }
                     expandedPaths.insert(field.name)
                 } else {
-                    // Collapsing -> deselect the operation from the AST
-                    if isSelected {
-                        astService.preserveSelections(forRoot: field.name, segment: operationType)
-                        toggleAction?.toggle(field.name, [], rootTypeName, operationType)
+                    if isSelected, let tab = activeTab {
+                        let newQuery = astService.collapseRoot(
+                            fieldName: field.name,
+                            segment: operationType,
+                            schema: schema,
+                            currentQuery: tab.query,
+                            rootTypeName: rootTypeName
+                        )
+                        tab.query = newQuery
                     }
                     expandedPaths.remove(field.name)
                 }

@@ -37,8 +37,8 @@ final class QueryASTService {
 
     /// Preserved selections for collapsed root operations, per segment.
     /// When a root operation is collapsed, its child selections are saved here.
-    /// When re-expanded, these are restored.
-    private(set) var preservedSelections: [OperationSegment: [String: Set<String>]] = [:]
+    /// When re-expanded, these are restored. Persisted to UserDefaults via ExpandStateStore.
+    var preservedSelections: [OperationSegment: [String: Set<String>]] = [:]
 
     /// The most recently interacted operation segment (for execution).
     private(set) var activeSegment: OperationSegment?
@@ -170,9 +170,10 @@ final class QueryASTService {
         preservedSelections[segment]?[rootFieldName] = preserved
     }
 
-    /// Restore preserved selections for a root operation and remove them from the store.
+    /// Restore preserved selections for a root operation (non-destructive read).
+    /// Preserved data is kept until overwritten by a subsequent `preserveSelections` call.
     func restoreSelections(forRoot rootFieldName: String, segment: OperationSegment = .queries) -> Set<String>? {
-        preservedSelections[segment]?.removeValue(forKey: rootFieldName)
+        preservedSelections[segment]?[rootFieldName]
     }
 
     /// Check if there are preserved selections for a root operation.
@@ -184,6 +185,98 @@ final class QueryASTService {
     /// Clear preserved selections for a root operation.
     func clearPreservedSelections(forRoot rootFieldName: String, segment: OperationSegment = .queries) {
         preservedSelections[segment]?.removeValue(forKey: rootFieldName)
+    }
+
+    // MARK: - Root Expand / Collapse (Batched)
+
+    /// Expand a root operation field: add the bare field to the AST and restore any
+    /// preserved child selections in a single batched operation (one print, one rebuild).
+    func expandRoot(
+        fieldName: String,
+        segment: OperationSegment,
+        schema: GraphQLSchema,
+        currentQuery: String,
+        rootTypeName: String?
+    ) -> String {
+        let resolvedRootTypeName = rootTypeName ?? self.rootTypeName(for: segment, schema: schema)
+        activeSegment = segment
+
+        // Step 1: Add the root field (bare, no default sub-selection)
+        let queryAfterRoot = addField(
+            fieldName: fieldName,
+            parentPath: [],
+            schema: schema,
+            currentQuery: currentQuery,
+            rootTypeName: resolvedRootTypeName,
+            segment: segment
+        )
+
+        // Step 2: If we have preserved selections, batch-add them
+        guard let preserved = restoreSelections(forRoot: fieldName, segment: segment) else {
+            return queryAfterRoot
+        }
+
+        let rootPrefix = fieldName + "/"
+        let preservedChildren = preserved.filter { $0.hasPrefix(rootPrefix) }
+        guard !preservedChildren.isEmpty else { return queryAfterRoot }
+
+        // Re-parse the document after root was added, then graft all children
+        // without intermediate print/rebuild cycles.
+        guard var document = currentDocument else { return queryAfterRoot }
+
+        for path in preservedChildren.sorted() {
+            let components = path.split(separator: "/").map(String.init)
+            guard components.count >= 2 else { continue }
+            let childField = components.last!
+            let parentPath = Array(components.dropLast())
+
+            // Parse a snippet for this child field
+            guard let snippetDoc = try? GraphQL.parse(source: "{ \(childField) }"),
+                  let snippetOp = snippetDoc.definitions.first as? OperationDefinition,
+                  let newField = snippetOp.selectionSet.selections.first else {
+                continue
+            }
+
+            // Graft into the document (no print/rebuild yet)
+            if let updated = addFieldToDocument(newField, at: parentPath, in: document, segment: segment) {
+                document = updated
+            }
+        }
+
+        // Single print + rebuild at the end
+        let result = GraphQL.print(ast: document)
+        currentDocument = document
+        parseError = nil
+        rebuildSelectedPaths()
+        suppressReparse = true
+        lastPrintedQuery = result
+        return result
+    }
+
+    /// Collapse a root operation field: preserve current selections and remove the field
+    /// from the AST.
+    func collapseRoot(
+        fieldName: String,
+        segment: OperationSegment,
+        schema: GraphQLSchema,
+        currentQuery: String,
+        rootTypeName: String?
+    ) -> String {
+        let resolvedRootTypeName = rootTypeName ?? self.rootTypeName(for: segment, schema: schema)
+        activeSegment = segment
+
+        // Preserve current selections before removing
+        preserveSelections(forRoot: fieldName, segment: segment)
+
+        // Remove the root field (toggleField dispatches to removeField since it's selected)
+        return toggleField(
+            fieldName: fieldName,
+            parentPath: [],
+            schema: schema,
+            currentQuery: currentQuery,
+            rootTypeName: resolvedRootTypeName,
+            segment: segment
+        )
     }
 
     // MARK: - Parse
@@ -350,14 +443,9 @@ final class QueryASTService {
         // Determine the return type of the field being added
         let fieldType = resolveFieldType(fieldName: fieldName, parentPath: parentPath, schema: schema, rootTypeName: rootTypeName)
 
-        // Build the field text
-        let fieldSnippet: String
-        if let objectType = fieldType, hasSubFields(objectType, schema: schema) {
-            let defaultSub = defaultSubField(for: objectType, schema: schema)
-            fieldSnippet = "\(fieldName) { \(defaultSub) }"
-        } else {
-            fieldSnippet = fieldName
-        }
+        // Build the field text — always bare field name, no default sub-selection.
+        // Object-type fields are added without a selection set; the user selects sub-fields explicitly.
+        let fieldSnippet = fieldName
 
         // Case 1: No document exists yet — create a fresh named operation
         if currentDocument == nil {
@@ -577,13 +665,34 @@ final class QueryASTService {
         var found = false
         for selection in selectionSet.selections {
             guard let field = selection as? GraphQL.Field,
-                  field.name.value == targetFieldName,
-                  let childSS = field.selectionSet else {
+                  field.name.value == targetFieldName else {
                 newSelections.append(selection)
                 continue
             }
 
             found = true
+
+            // If the field has no selectionSet (bare object-type field), create an empty one
+            // so we can add children to it.
+            let childSS: SelectionSet
+            if let existing = field.selectionSet {
+                childSS = existing
+            } else if remainingPath.isEmpty {
+                // At target depth with nil selectionSet — create an empty one to apply modification
+                guard let emptyDoc = try? GraphQL.parse(source: "{ _placeholder { _empty } }"),
+                      let emptyOp = emptyDoc.definitions.first as? OperationDefinition,
+                      let emptyField = emptyOp.selectionSet.selections.first as? GraphQL.Field,
+                      let emptyChildSS = emptyField.selectionSet else {
+                    return nil
+                }
+                // Strip the placeholder selection to get a truly empty selection set
+                childSS = emptyChildSS.set(value: .array([] as [Selection]), key: "selections")
+            } else {
+                // Intermediate path with nil selectionSet — can't navigate deeper
+                newSelections.append(selection)
+                continue
+            }
+
             guard let modifiedChildSS = modifySelectionSet(
                 childSS, at: remainingPath, modification: modification
             ) else {
