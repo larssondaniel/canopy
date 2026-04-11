@@ -1,24 +1,14 @@
 import SwiftUI
 
-struct EndpointToolbarContent: View {
-    @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+struct RunCancelButton: View {
+    var isLoading: Bool
     var hasUnresolved: Bool
     var runButtonTooltip: String
     var onRun: () -> Void
     var onCancel: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            runCancelButton
-            methodMenu
-            urlField
-        }
-    }
-
-    @ViewBuilder
-    private var runCancelButton: some View {
-        if tab.isLoading {
+        if isLoading {
             Button { onCancel() } label: {
                 Label("Cancel", systemImage: "stop.fill")
             }
@@ -37,6 +27,18 @@ struct EndpointToolbarContent: View {
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(hasUnresolved)
             .help(runButtonTooltip)
+        }
+    }
+}
+
+struct EndpointToolbarContent: View {
+    @Bindable var tab: QueryTab
+    var activeEnvironment: AppEnvironment?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            methodMenu
+            urlField
         }
     }
 

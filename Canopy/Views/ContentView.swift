@@ -37,15 +37,23 @@ struct ContentView: View {
             run(segment: segment)
         })
         .toolbar {
-            ToolbarItem(placement: .principal) {
+            ToolbarItem(placement: .navigation) {
                 if let tab = activeQueryTab {
-                    EndpointToolbarContent(
-                        tab: tab,
-                        activeEnvironment: activeEnvironment,
+                    RunCancelButton(
+                        isLoading: tab.isLoading,
                         hasUnresolved: hasUnresolved,
                         runButtonTooltip: runButtonTooltip,
                         onRun: { run() },
                         onCancel: cancel
+                    )
+                }
+            }
+
+            ToolbarItem(placement: .principal) {
+                if let tab = activeQueryTab {
+                    EndpointToolbarContent(
+                        tab: tab,
+                        activeEnvironment: activeEnvironment
                     )
                 }
             }
