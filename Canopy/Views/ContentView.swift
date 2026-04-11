@@ -121,51 +121,12 @@ struct ContentView: View {
     // MARK: - Unresolved Variable Validation
 
     private var hasUnresolved: Bool {
-        guard let tab = activeQueryTab, let env = activeEnvironment else { return false }
-        let vars = env.variables
-
-        if TemplateEngine.hasUnresolvedVariables(in: tab.endpoint, variables: vars) { return true }
-        if TemplateEngine.hasUnresolvedVariables(in: tab.variables, variables: vars) { return true }
-
-        for header in tab.headers {
-            if TemplateEngine.hasUnresolvedVariables(in: header.value, variables: vars) { return true }
-        }
-
-        let auth = tab.authConfig.toAuthConfiguration()
-        switch auth {
-        case .bearer(let token):
-            if TemplateEngine.hasUnresolvedVariables(in: token, variables: vars) { return true }
-        case .apiKey(_, let value):
-            if TemplateEngine.hasUnresolvedVariables(in: value, variables: vars) { return true }
-        case .basic(let username, let password):
-            if TemplateEngine.hasUnresolvedVariables(in: username, variables: vars) { return true }
-            if TemplateEngine.hasUnresolvedVariables(in: password, variables: vars) { return true }
-        case .none:
-            break
-        }
-
-        return false
-    }
-
-    private var unresolvedVariableNames: [String] {
-        guard let tab = activeQueryTab, let env = activeEnvironment else { return [] }
-        let vars = env.variables
-        var names: [String] = []
-
-        let fields = [tab.endpoint, tab.variables] + tab.headers.map(\.value)
-        for field in fields {
-            for v in TemplateEngine.findVariables(in: field) where vars[v.name] == nil {
-                if !names.contains(v.name) {
-                    names.append(v.name)
-                }
-            }
-        }
-        return names
+        activeQueryTab?.hasUnresolvedVariables(environment: activeEnvironment) ?? false
     }
 
     private var runButtonTooltip: String {
-        if hasUnresolved {
-            return "Undefined variables: \(unresolvedVariableNames.map { "{{\($0)}}" }.joined(separator: ", "))"
+        if let names = activeQueryTab?.unresolvedVariableNames(environment: activeEnvironment), !names.isEmpty {
+            return "Undefined variables: \(names.map { "{{\($0)}}" }.joined(separator: ", "))"
         }
         return "Send request (⌘⏎)"
     }
