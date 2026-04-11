@@ -7,21 +7,10 @@ struct QueryClientView: View {
 
     var body: some View {
         HSplitView {
-            RequestPane(tab: tab, activeEnvironment: activeEnvironment, onRun: { run() }, onCancel: cancel)
+            RequestPane(tab: tab, activeEnvironment: activeEnvironment)
                 .frame(minWidth: 300)
             ResponsePane(tab: tab)
                 .frame(minWidth: 300)
         }
-    }
-
-    @SwiftUI.Environment(\.runOperationAction) private var runOperationAction
-
-    private func run() {
-        runOperationAction?.run(.queries)
-    }
-
-    private func cancel() {
-        tab.currentTask?.cancel()
-        tab.isLoading = false
     }
 }
