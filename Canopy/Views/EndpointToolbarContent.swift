@@ -13,18 +13,20 @@ struct RunCancelButton: View {
         if isLoading {
             Button { onCancel() } label: {
                 Image(systemName: "stop.fill")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 26)
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
-            .controlSize(.regular)
             .clipShape(Circle())
             .keyboardShortcut(.escape, modifiers: [])
         } else {
             Button { onRun() } label: {
                 Image(systemName: "play.fill")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 26)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
             .clipShape(Circle())
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(hasUnresolved)
@@ -40,7 +42,7 @@ struct EndpointToolbarContent: View {
     var activeEnvironment: AppEnvironment?
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             methodMenu
             urlField
             shortcutHint
@@ -75,9 +77,6 @@ struct EndpointToolbarContent: View {
             activeEnvironment: activeEnvironment
         )
         .font(.system(size: 12, design: .monospaced))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.quaternary, in: .capsule)
         .frame(minWidth: 300, maxWidth: 600)
 
         if #available(macOS 26.0, *) {
