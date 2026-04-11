@@ -257,8 +257,8 @@ struct QueryASTServiceTests {
         #expect(q2.contains("id"))
     }
 
-    @Test("Uncheck last sub-field removes parent")
-    func uncheckLastSubFieldRemovesParent() {
+    @Test("Uncheck last sub-field leaves parent as bare field")
+    func uncheckLastSubFieldLeavesParentBare() {
         let service = QueryASTService()
         let schema = makeTestSchema()
         service.parse("{ user { id } version }")
@@ -270,8 +270,10 @@ struct QueryASTServiceTests {
             currentQuery: "{ user { id } version }"
         )
 
-        // "user" should be removed since "id" was its only sub-field
-        #expect(!result.contains("user"))
+        // "user" should remain as a bare field (no selection set)
+        #expect(result.contains("user"))
+        #expect(!result.contains("user {")) // No braces
+        #expect(!result.contains("id"))
         #expect(result.contains("version"))
     }
 

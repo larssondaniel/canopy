@@ -52,6 +52,8 @@ struct QueryExplorerView: View {
     @State private var focusedRow: OutlineRowID?
     /// Currently hovered row for hover highlight.
     @State private var hoveredRow: OutlineRowID?
+    /// Incremented to trigger argument checkbox toggle from keyboard.
+    @State private var argToggle = ArgumentToggleTrigger()
     /// Keyboard focus state for the sidebar list.
     @FocusState private var isSidebarFocused: Bool
 
@@ -302,6 +304,7 @@ struct QueryExplorerView: View {
             .environment(\.setHoveredRowAction, SetHoveredRowAction { row in
                 hoveredRow = row
             })
+            .environment(\.argumentToggleTrigger, argToggle)
             .environment(\.toggleFieldAction, toggleAction)
             .environment(\.setArgumentAction, setArgAction)
             .environment(\.inspectFieldAction, InspectFieldAction { field, resolvedTypeName in
@@ -428,8 +431,13 @@ struct QueryExplorerView: View {
             for field in fields {
                 rows.append(.operation(item.segment, field.name))
 
-                // If this root operation is expanded, recurse into its sub-fields
+                // If this root operation is expanded, include arguments then sub-fields
                 if expandedPaths.contains(field.name) {
+                    // Arguments come first (shown before sub-fields in the view)
+                    for arg in field.args {
+                        rows.append(.argument("\(field.name)/@\(arg.name)"))
+                    }
+
                     let returnTypeName = field.type.toTypeRef().namedType
                     if let returnType = schema.type(named: returnTypeName) {
                         collectVisibleFields(
@@ -461,6 +469,11 @@ struct QueryExplorerView: View {
 
             // If this field is expanded and returns an object type, recurse
             if expandedPaths.contains(pathKey) {
+                // Arguments come first (shown before sub-fields in the view)
+                for arg in field.args {
+                    rows.append(.argument("\(pathKey)/@\(arg.name)"))
+                }
+
                 let namedType = field.type.toTypeRef().namedType
                 guard !ancestorTypes.contains(namedType) else { continue } // circular
                 if let returnType = schema.type(named: namedType),
@@ -547,6 +560,8 @@ struct QueryExplorerView: View {
                 segment: segmentData.segment
             )
             tab.query = newQuery
+        case .argument:
+            argToggle.count += 1
         }
     }
 }
@@ -735,7 +750,8 @@ private struct RootExpandableFieldView: View {
                         fieldName: field.name,
                         parentPath: [],
                         rootTypeName: rootTypeName,
-                        operationType: operationType
+                        operationType: operationType,
+                        rowID: .argument("\(field.name)/@\(arg.name)")
                     )
                 }
 
@@ -932,6 +948,8 @@ private struct ExplorerFieldView: View {
     let currentArgValues: [String: String]
     let subFields: [GraphQLField]?
 
+    @SwiftUI.Environment(\.setFocusedRowAction) private var setFocusAction
+
     let schema: GraphQLSchema
     let searchText: String
     let selectedPaths: Set<String>
@@ -979,7 +997,8 @@ private struct ExplorerFieldView: View {
                     fieldName: fieldName,
                     parentPath: parentPath,
                     rootTypeName: rootTypeName,
-                    operationType: operationType
+                    operationType: operationType,
+                    rowID: .argument("\(pathKey)/@\(arg.name)")
                 )
             }
 
@@ -1049,14 +1068,23 @@ private struct ArgumentRowView: View {
     let parentPath: [String]
     var rootTypeName: String? = nil
     var operationType: OperationSegment = .queries
+    var rowID: OutlineRowID? = nil
 
     @State private var editText: String = ""
     @State private var localChecked: Bool = false
     @FocusState private var isFocused: Bool
     @SwiftUI.Environment(\.setArgumentAction) private var setArgAction
+    @SwiftUI.Environment(\.focusedOutlineRow) private var focusedRow
+    @SwiftUI.Environment(\.hoveredOutlineRow) private var hoveredRow
+    @SwiftUI.Environment(\.argumentToggleTrigger) private var argToggle
 
     private var canInteract: Bool { isFieldSelected && !isDisabled }
     private var showInput: Bool { (isChecked || localChecked) && canInteract }
+    private var isRowFocused: Bool { rowID != nil && focusedRow == rowID }
+    private var isRowHovered: Bool { rowID != nil && hoveredRow == rowID }
+
+    private static let selectionColor = Color(nsColor: NSColor.controlAccentColor).opacity(0.85)
+    private static let hoverColor = Color.primary.opacity(0.06)
 
     var body: some View {
         HStack(spacing: 4) {
@@ -1106,7 +1134,19 @@ private struct ArgumentRowView: View {
             }
         }
         .font(.system(.caption, design: .monospaced))
-        .listRowBackground(Color.clear)
+        .listRowBackground(
+            isRowFocused
+                ? RoundedRectangle(cornerRadius: 7)
+                    .fill(Self.selectionColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                : isRowHovered
+                    ? RoundedRectangle(cornerRadius: 7)
+                        .fill(Self.hoverColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                    : nil
+        )
         .task(id: currentValue) {
             if !isFocused {
                 editText = currentValue
@@ -1117,6 +1157,18 @@ private struct ArgumentRowView: View {
         }
         .onAppear {
             editText = currentValue
+        }
+        .onChange(of: argToggle.count) { _, _ in
+            guard isRowFocused, canInteract else { return }
+            if isChecked || localChecked {
+                // Toggle OFF: clear the argument
+                localChecked = false
+                editText = ""
+                setArgAction?.setArgument(fieldName, parentPath, argName, "", rootTypeName, operationType)
+            } else {
+                // Toggle ON: show the input field
+                localChecked = true
+            }
         }
     }
 

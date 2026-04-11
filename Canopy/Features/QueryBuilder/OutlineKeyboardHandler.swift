@@ -6,6 +6,7 @@ enum OutlineRowID: Hashable {
     case section(OperationSegment)
     case operation(OperationSegment, String) // segment + field name
     case field(String) // full path key like "user/id"
+    case argument(String) // argument path key like "user/@id" (@ prefix distinguishes from fields)
 }
 
 // MARK: - Environment keys for focused row
@@ -18,6 +19,11 @@ struct SetHoveredRowAction {
     let setHover: (OutlineRowID?) -> Void
 }
 
+/// Incremented when the focused argument row should toggle its checkbox.
+struct ArgumentToggleTrigger: Equatable {
+    var count: Int = 0
+}
+
 extension EnvironmentValues {
     @Entry var focusedOutlineRow: OutlineRowID? = nil
     @Entry var hoveredOutlineRow: OutlineRowID? = nil
@@ -25,6 +31,7 @@ extension EnvironmentValues {
     @Entry var setHoveredRowAction: SetHoveredRowAction? = nil
     /// True when the current row is keyboard-focused (children should use white text).
     @Entry var isRowHighlighted: Bool = false
+    @Entry var argumentToggleTrigger: ArgumentToggleTrigger = ArgumentToggleTrigger()
 }
 
 /// View modifier that highlights an entire List row (including chevron) when focused or hovered.
@@ -191,6 +198,27 @@ struct OutlineKeyboardModifier: ViewModifier {
                 return .handled
             }
             return .ignored
+        case .argument(let argPath):
+            // Jump to parent field: strip the /@argName suffix
+            let components = argPath.split(separator: "/")
+            if let argPart = components.last, argPart.hasPrefix("@") {
+                let parentComponents = components.dropLast()
+                if parentComponents.count == 1 {
+                    // Parent is a root operation
+                    let rootName = String(parentComponents[parentComponents.startIndex])
+                    if let parentRow = visibleRows.first(where: {
+                        if case .operation(_, let name) = $0 { return name == rootName }
+                        return false
+                    }) {
+                        focusedRow = parentRow
+                        return .handled
+                    }
+                } else if parentComponents.count >= 2 {
+                    focusedRow = .field(parentComponents.joined(separator: "/"))
+                    return .handled
+                }
+            }
+            return .ignored
         }
     }
 
@@ -215,6 +243,8 @@ struct OutlineKeyboardModifier: ViewModifier {
                 return .handled
             }
             return .ignored
+        case .argument:
+            return .ignored // Arguments don't expand/collapse
         }
     }
 }

@@ -625,15 +625,19 @@ final class QueryASTService {
         )
         guard let newSelectionSet else { return nil }
 
-        // Check if the modification left an empty selection set at a non-root level
-        // If so, remove the parent field
+        // Check if the modification left an empty selection set at a non-root level.
+        // If so, convert the parent field to a bare field (remove its selection set)
+        // instead of removing the parent entirely.
         if !parentPath.isEmpty {
-            let parentOfTarget = Array(parentPath.dropLast())
-            let targetFieldName = parentPath.last!
             if let targetSS = findSelectionSetInModified(newSelectionSet, at: parentPath),
                targetSS.selections.isEmpty {
-                // Remove the parent field that now has empty selections
-                return removeFieldFromDocument(targetFieldName, at: parentOfTarget, in: document, segment: segment)
+                // Strip the selection set from the parent field, leaving it bare
+                let strippedSS = stripSelectionSet(newSelectionSet, at: parentPath)
+                guard let strippedSS else { return nil }
+                let newOp = op.set(value: .node(strippedSS), key: "selectionSet")
+                var definitions = document.definitions
+                definitions[index] = newOp
+                return document.set(value: .array(definitions), key: "definitions")
             }
         }
 
@@ -719,6 +723,42 @@ final class QueryASTService {
             current = nested
         }
         return current
+    }
+
+    /// Remove the selectionSet from a field at the given path, leaving it as a bare field.
+    private func stripSelectionSet(_ selectionSet: SelectionSet, at path: [String]) -> SelectionSet? {
+        guard !path.isEmpty else { return selectionSet }
+
+        let targetFieldName = path.last!
+        let parentPath = Array(path.dropLast())
+
+        // Navigate to the parent selection set, then rebuild with the target field stripped
+        return modifySelectionSet(selectionSet, at: parentPath) { selections in
+            selections.map { sel in
+                guard let field = sel as? GraphQL.Field,
+                      field.name.value == targetFieldName else {
+                    return sel
+                }
+                // Parse a bare field to get a Field node without selectionSet
+                guard let bareDoc = try? GraphQL.parse(source: "{ \(targetFieldName) }"),
+                      let bareOp = bareDoc.definitions.first as? OperationDefinition,
+                      let bareField = bareOp.selectionSet.selections.first as? GraphQL.Field else {
+                    return sel
+                }
+                // Preserve the original field's arguments and directives on the bare field
+                var result: Node = bareField
+                if !field.arguments.isEmpty {
+                    result = result.set(value: .array(field.arguments), key: "arguments")
+                }
+                if !field.directives.isEmpty {
+                    result = result.set(value: .array(field.directives), key: "directives")
+                }
+                if let alias = field.alias {
+                    result = result.set(value: .node(alias), key: "alias")
+                }
+                return result as! Selection
+            }
+        }
     }
 
     // MARK: - Set Arguments
