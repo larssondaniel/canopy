@@ -37,6 +37,64 @@ struct ContentView: View {
             run(segment: segment)
         })
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                if let tab = activeQueryTab {
+                    if tab.isLoading {
+                        Button { cancel() } label: {
+                            Label("Cancel", systemImage: "stop.fill")
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .controlSize(.small)
+                        .keyboardShortcut(.escape, modifiers: [])
+                    } else {
+                        Button { run() } label: {
+                            Label("Run", systemImage: "play.fill")
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(hasUnresolved)
+                        .help(runButtonTooltip)
+                    }
+                }
+            }
+
+            ToolbarItem(placement: .automatic) {
+                if let tab = activeQueryTab {
+                    @Bindable var tab = tab
+                    Menu {
+                        ForEach(HTTPMethod.allCases, id: \.self) { method in
+                            Button(method.rawValue) { tab.method = method }
+                        }
+                    } label: {
+                        Text(tab.method.rawValue)
+                    }
+                    .menuStyle(.borderlessButton)
+                }
+            }
+
+            ToolbarItem(placement: .automatic) {
+                if let tab = activeQueryTab {
+                    @Bindable var tab = tab
+                    TemplateTextField(
+                        text: $tab.endpoint,
+                        placeholder: "https://example.com/graphql",
+                        activeEnvironment: activeEnvironment
+                    )
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minWidth: 200, idealWidth: 400, maxWidth: .infinity)
+                }
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Text("⌘⏎")
+                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 11))
+            }
+
             ToolbarItem(placement: .automatic) {
                 EnvironmentPicker()
             }
@@ -58,6 +116,58 @@ struct ContentView: View {
         .onAppear {
             updateActiveEndpoint()
         }
+    }
+
+    // MARK: - Unresolved Variable Validation
+
+    private var hasUnresolved: Bool {
+        guard let tab = activeQueryTab, let env = activeEnvironment else { return false }
+        let vars = env.variables
+
+        if TemplateEngine.hasUnresolvedVariables(in: tab.endpoint, variables: vars) { return true }
+        if TemplateEngine.hasUnresolvedVariables(in: tab.variables, variables: vars) { return true }
+
+        for header in tab.headers {
+            if TemplateEngine.hasUnresolvedVariables(in: header.value, variables: vars) { return true }
+        }
+
+        let auth = tab.authConfig.toAuthConfiguration()
+        switch auth {
+        case .bearer(let token):
+            if TemplateEngine.hasUnresolvedVariables(in: token, variables: vars) { return true }
+        case .apiKey(_, let value):
+            if TemplateEngine.hasUnresolvedVariables(in: value, variables: vars) { return true }
+        case .basic(let username, let password):
+            if TemplateEngine.hasUnresolvedVariables(in: username, variables: vars) { return true }
+            if TemplateEngine.hasUnresolvedVariables(in: password, variables: vars) { return true }
+        case .none:
+            break
+        }
+
+        return false
+    }
+
+    private var unresolvedVariableNames: [String] {
+        guard let tab = activeQueryTab, let env = activeEnvironment else { return [] }
+        let vars = env.variables
+        var names: [String] = []
+
+        let fields = [tab.endpoint, tab.variables] + tab.headers.map(\.value)
+        for field in fields {
+            for v in TemplateEngine.findVariables(in: field) where vars[v.name] == nil {
+                if !names.contains(v.name) {
+                    names.append(v.name)
+                }
+            }
+        }
+        return names
+    }
+
+    private var runButtonTooltip: String {
+        if hasUnresolved {
+            return "Undefined variables: \(unresolvedVariableNames.map { "{{\($0)}}" }.joined(separator: ", "))"
+        }
+        return "Send request (⌘⏎)"
     }
 
     // MARK: - Run / Cancel
