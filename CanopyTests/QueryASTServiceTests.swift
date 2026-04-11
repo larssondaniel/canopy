@@ -196,8 +196,8 @@ struct QueryASTServiceTests {
         #expect(result.contains("user"))
     }
 
-    @Test("Toggle object field on: auto-selects default sub-field (id)")
-    func toggleObjectFieldAutoSelectsId() {
+    @Test("Toggle object field on: inserts bare field name without default sub-field")
+    func toggleObjectFieldBareFieldName() {
         let service = QueryASTService()
         let schema = makeTestSchema()
         service.parse("{ version }")
@@ -210,11 +210,11 @@ struct QueryASTServiceTests {
         )
 
         #expect(result.contains("user"))
-        #expect(result.contains("id")) // Auto-selected because User has "id"
+        #expect(!result.contains("user {")) // No sub-selection added
     }
 
-    @Test("Toggle object field on: auto-selects first scalar when no id")
-    func toggleObjectFieldAutoSelectsFirstScalar() {
+    @Test("Toggle nested object field on: inserts bare field name")
+    func toggleNestedObjectFieldBareFieldName() {
         let service = QueryASTService()
         let schema = makeTestSchema()
         service.parse("{ user { id } }")
@@ -226,14 +226,39 @@ struct QueryASTServiceTests {
             currentQuery: "{ user { id } }"
         )
 
-        // Profile has no "id" field, so should pick "bio" (first scalar)
         service.parse(result)
         #expect(result.contains("profile"))
-        #expect(result.contains("bio"))
+        #expect(!result.contains("bio")) // No default sub-field auto-selected
     }
 
-    @Test("Uncheck last sub-field removes parent")
-    func uncheckLastSubFieldRemovesParent() {
+    @Test("Adding child to bare object-type field creates selection set")
+    func addChildToBareField() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Add bare "user" field
+        let q1 = service.toggleField(
+            fieldName: "user",
+            parentPath: [],
+            schema: schema,
+            currentQuery: ""
+        )
+        #expect(q1.contains("user"))
+        #expect(!q1.contains("user {"))
+
+        // Now add "id" as a child of "user"
+        let q2 = service.toggleField(
+            fieldName: "id",
+            parentPath: ["user"],
+            schema: schema,
+            currentQuery: q1
+        )
+        #expect(q2.contains("user"))
+        #expect(q2.contains("id"))
+    }
+
+    @Test("Uncheck last sub-field leaves parent as bare field")
+    func uncheckLastSubFieldLeavesParentBare() {
         let service = QueryASTService()
         let schema = makeTestSchema()
         service.parse("{ user { id } version }")
@@ -245,8 +270,10 @@ struct QueryASTServiceTests {
             currentQuery: "{ user { id } version }"
         )
 
-        // "user" should be removed since "id" was its only sub-field
-        #expect(!result.contains("user"))
+        // "user" should remain as a bare field (no selection set)
+        #expect(result.contains("user"))
+        #expect(!result.contains("user {")) // No braces
+        #expect(!result.contains("id"))
         #expect(result.contains("version"))
     }
 
@@ -530,7 +557,7 @@ struct QueryASTServiceTests {
         )
 
         #expect(result.contains("createUser"))
-        #expect(result.contains("id")) // User has "id", so auto-selected
+        #expect(!result.contains("createUser {")) // Bare field, no default sub-selection
         #expect(result.contains("mutation Mutation"))
     }
 
@@ -548,7 +575,7 @@ struct QueryASTServiceTests {
         )
 
         #expect(result.contains("userCreated"))
-        #expect(result.contains("id")) // User has "id", so auto-selected
+        #expect(!result.contains("userCreated {")) // Bare field, no default sub-selection
         #expect(result.contains("subscription Subscription"))
     }
 
@@ -732,8 +759,8 @@ struct QueryASTServiceTests {
         #expect(preserved?.contains("user/name") == true)
     }
 
-    @Test("restoreSelections returns preserved paths and removes them")
-    func restoreSelectionsRoundTrip() {
+    @Test("restoreSelections returns preserved paths without removing them")
+    func restoreSelectionsNonDestructive() {
         let service = QueryASTService()
         service.parse("{ user { id name } }")
 
@@ -743,7 +770,12 @@ struct QueryASTServiceTests {
         let restored = service.restoreSelections(forRoot: "user")
         #expect(restored?.contains("user/id") == true)
         #expect(restored?.contains("user/name") == true)
-        #expect(!service.hasPreservedSelections(forRoot: "user"))
+        // Non-destructive: preserved data is still available
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+
+        // Can restore again without data loss
+        let restored2 = service.restoreSelections(forRoot: "user")
+        #expect(restored2?.contains("user/id") == true)
     }
 
     @Test("Re-collapse overwrites preserved selections")
@@ -889,5 +921,180 @@ struct QueryASTServiceTests {
         let didParse = service.parse("{ invalid {{")
         #expect(didParse == false)
         #expect(service.parseError != nil)
+    }
+
+    // MARK: - expandRoot / collapseRoot Tests
+
+    @Test("expandRoot with no preserved selections adds bare field name")
+    func expandRootBareField() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        let result = service.expandRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: "",
+            rootTypeName: "Query"
+        )
+
+        #expect(result.contains("user"))
+        #expect(!result.contains("user {")) // Bare field, no sub-selection
+    }
+
+    @Test("expandRoot restores preserved selections in one batch")
+    func expandRootRestoresPreserved() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Build a query with user { id name }
+        service.parse("query Query {\n  user {\n    id\n    name\n  }\n}")
+
+        // Collapse: preserve and remove
+        let collapsed = service.collapseRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: "query Query {\n  user {\n    id\n    name\n  }\n}",
+            rootTypeName: "Query"
+        )
+        #expect(!collapsed.contains("user"))
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+
+        // Expand: should restore preserved id + name
+        let expanded = service.expandRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: collapsed,
+            rootTypeName: "Query"
+        )
+
+        #expect(expanded.contains("user"))
+        #expect(expanded.contains("id"))
+        #expect(expanded.contains("name"))
+    }
+
+    @Test("collapseRoot preserves selections and removes field")
+    func collapseRootPreservesAndRemoves() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+        service.parse("query Query {\n  user {\n    id\n    email\n  }\n}")
+
+        let result = service.collapseRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: "query Query {\n  user {\n    id\n    email\n  }\n}",
+            rootTypeName: "Query"
+        )
+
+        #expect(!result.contains("user"))
+        #expect(service.hasPreservedSelections(forRoot: "user"))
+        let preserved = service.preservedSelections[.queries]?["user"]
+        #expect(preserved?.contains("user/id") == true)
+        #expect(preserved?.contains("user/email") == true)
+    }
+
+    @Test("Expand-then-collapse does not lose preserved selections")
+    func expandCollapsePreservesData() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        // Parse user with id and name
+        service.parse("query Query {\n  user {\n    id\n    name\n  }\n}")
+
+        // Collapse: preserve selections
+        let collapsed = service.collapseRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: "query Query {\n  user {\n    id\n    name\n  }\n}",
+            rootTypeName: "Query"
+        )
+
+        // Expand: restore preserved
+        let expanded = service.expandRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: collapsed,
+            rootTypeName: "Query"
+        )
+
+        // Immediately collapse again — should preserve the restored selections (not lose them)
+        let collapsed2 = service.collapseRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: expanded,
+            rootTypeName: "Query"
+        )
+
+        // Preserved selections should still have id and name
+        let preserved = service.preservedSelections[.queries]?["user"]
+        #expect(preserved?.contains("user/id") == true)
+        #expect(preserved?.contains("user/name") == true)
+
+        // And re-expanding should still restore them
+        let expanded2 = service.expandRoot(
+            fieldName: "user",
+            segment: .queries,
+            schema: schema,
+            currentQuery: collapsed2,
+            rootTypeName: "Query"
+        )
+        #expect(expanded2.contains("id"))
+        #expect(expanded2.contains("name"))
+    }
+
+    @Test("expandRoot with mutation segment works correctly")
+    func expandRootMutation() {
+        let service = QueryASTService()
+        let schema = makeTestSchema()
+
+        let result = service.expandRoot(
+            fieldName: "createUser",
+            segment: .mutations,
+            schema: schema,
+            currentQuery: "",
+            rootTypeName: "Mutation"
+        )
+
+        #expect(result.contains("createUser"))
+        #expect(result.contains("mutation Mutation"))
+    }
+
+    // MARK: - ExpandStateStore Persistence Tests
+
+    @Test("Preserved selections round-trip through ExpandStateStore")
+    func preservedSelectionsRoundTrip() {
+        let testEndpoint = "http://test-\(UUID().uuidString).example.com/graphql"
+        let selections: [OperationSegment: [String: Set<String>]] = [
+            .queries: [
+                "user": Set(["user", "user/id", "user/name"]),
+                "posts": Set(["posts", "posts/id", "posts/title"])
+            ],
+            .mutations: [
+                "createUser": Set(["createUser", "createUser/id"])
+            ]
+        ]
+
+        ExpandStateStore.savePreservedSelections(selections, for: testEndpoint)
+        let loaded = ExpandStateStore.loadPreservedSelections(for: testEndpoint)
+
+        #expect(loaded[.queries]?["user"] == selections[.queries]?["user"])
+        #expect(loaded[.queries]?["posts"] == selections[.queries]?["posts"])
+        #expect(loaded[.mutations]?["createUser"] == selections[.mutations]?["createUser"])
+        #expect(loaded[.subscriptions] == nil)
+
+        // Clean up
+        UserDefaults.standard.removeObject(forKey: "preservedSelections_\(testEndpoint.hashValue)")
+    }
+
+    @Test("Loading preserved selections for unknown endpoint returns empty")
+    func loadPreservedSelectionsUnknown() {
+        let loaded = ExpandStateStore.loadPreservedSelections(for: "http://nonexistent-\(UUID().uuidString).example.com/graphql")
+        #expect(loaded.isEmpty)
     }
 }

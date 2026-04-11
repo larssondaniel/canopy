@@ -180,4 +180,49 @@ struct GraphQLLibrarySpikeTests {
         #expect(postsField.selectionSet!.selections.count == 1)
         #expect((postsField.selectionSet!.selections[0] as! Field).name.value == "id")
     }
+
+    // MARK: - Bare Object-Type Field Tests
+
+    @Test("Bare object-type field parses and round-trips")
+    func bareObjectFieldRoundTrip() throws {
+        // "user" returns an object type but has no selection set — syntactically valid
+        let doc = try GraphQL.parse(source: "{ user }")
+        let printed = GraphQL.print(ast: doc)
+        let reparsed = try GraphQL.parse(source: printed)
+        let reprinted = GraphQL.print(ast: reparsed)
+        #expect(printed == reprinted)
+
+        // Verify the field has nil selectionSet
+        let op = doc.definitions[0] as! OperationDefinition
+        let field = op.selectionSet.selections[0] as! Field
+        #expect(field.name.value == "user")
+        #expect(field.selectionSet == nil)
+
+        // Verify printed output contains bare "user" (no selection set braces after it)
+        #expect(printed.contains("user"))
+        #expect(!printed.contains("user {"))
+    }
+
+    @Test("Bare field with named operation parses correctly")
+    func bareFieldNamedOperation() throws {
+        let doc = try GraphQL.parse(source: "query Query { user }")
+        let printed = GraphQL.print(ast: doc)
+        #expect(printed.contains("user"))
+
+        let op = doc.definitions[0] as! OperationDefinition
+        let field = op.selectionSet.selections[0] as! Field
+        #expect(field.selectionSet == nil)
+    }
+
+    @Test("Multiple bare fields parse correctly")
+    func multipleBareFields() throws {
+        let doc = try GraphQL.parse(source: "{ user posts version }")
+        let printed = GraphQL.print(ast: doc)
+        let reparsed = try GraphQL.parse(source: printed)
+        let reprinted = GraphQL.print(ast: reparsed)
+        #expect(printed == reprinted)
+
+        let op = doc.definitions[0] as! OperationDefinition
+        #expect(op.selectionSet.selections.count == 3)
+    }
 }

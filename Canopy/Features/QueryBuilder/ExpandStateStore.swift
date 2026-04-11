@@ -66,6 +66,41 @@ enum ExpandStateStore {
         }
     }
 
+    // MARK: - Preserved Selections
+
+    /// Load preserved selections for a given endpoint from UserDefaults.
+    /// Returns a dictionary keyed by segment raw value → root field name → array of paths.
+    static func loadPreservedSelections(for endpoint: String) -> [OperationSegment: [String: Set<String>]] {
+        let key = preservedKey(for: endpoint)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let raw = try? JSONDecoder().decode([String: [String: [String]]].self, from: data) else {
+            return [:]
+        }
+        // Convert [String: [String: [String]]] to [OperationSegment: [String: Set<String>]]
+        var result: [OperationSegment: [String: Set<String>]] = [:]
+        for (segmentRaw, fields) in raw {
+            guard let segment = OperationSegment(rawValue: segmentRaw) else { continue }
+            result[segment] = fields.mapValues { Set($0) }
+        }
+        return result
+    }
+
+    /// Save preserved selections for a given endpoint to UserDefaults.
+    static func savePreservedSelections(
+        _ selections: [OperationSegment: [String: Set<String>]],
+        for endpoint: String
+    ) {
+        let key = preservedKey(for: endpoint)
+        // Convert [OperationSegment: [String: Set<String>]] to [String: [String: [String]]]
+        var raw: [String: [String: [String]]] = [:]
+        for (segment, fields) in selections {
+            raw[segment.rawValue] = fields.mapValues { $0.sorted() }
+        }
+        if let data = try? JSONEncoder().encode(raw) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
     // MARK: - Private
 
     private static func sectionKey(for endpoint: String) -> String {
@@ -74,6 +109,10 @@ enum ExpandStateStore {
 
     private static func pathKey(for endpoint: String) -> String {
         "expandedPaths_\(stableHash(endpoint))"
+    }
+
+    private static func preservedKey(for endpoint: String) -> String {
+        "preservedSelections_\(stableHash(endpoint))"
     }
 
     /// Stable hash that doesn't change across app launches (unlike Hashable on String).
