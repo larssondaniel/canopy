@@ -39,54 +39,23 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 if let tab = activeQueryTab {
-                    @Bindable var tab = tab
-                    HStack(spacing: 8) {
-                        // Run / Cancel button
-                        if tab.isLoading {
-                            Button { cancel() } label: {
-                                Label("Cancel", systemImage: "stop.fill")
-                            }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                            .controlSize(.small)
-                            .keyboardShortcut(.escape, modifiers: [])
-                        } else {
-                            Button { run() } label: {
-                                Label("Run", systemImage: "play.fill")
-                            }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(hasUnresolved)
-                            .help(runButtonTooltip)
-                        }
+                    EndpointToolbarContent(
+                        tab: tab,
+                        activeEnvironment: activeEnvironment,
+                        hasUnresolved: hasUnresolved,
+                        runButtonTooltip: runButtonTooltip,
+                        onRun: { run() },
+                        onCancel: cancel
+                    )
+                }
+            }
 
-                        // HTTP Method selector
-                        Menu {
-                            ForEach(HTTPMethod.allCases, id: \.self) { method in
-                                Button(method.rawValue) { tab.method = method }
-                            }
-                        } label: {
-                            Text(tab.method.rawValue)
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-
-                        // URL field
-                        TemplateTextField(
-                            text: $tab.endpoint,
-                            placeholder: "https://example.com/graphql",
-                            activeEnvironment: activeEnvironment
-                        )
-                        .font(.system(size: 12, design: .monospaced))
-                        .frame(minWidth: 200, maxWidth: .infinity)
-
-                        // Environment picker
-                        EnvironmentPicker()
-                    }
+            ToolbarItem(placement: .automatic) {
+                if #available(macOS 26.0, *) {
+                    EnvironmentPicker()
+                        .glassEffect(.identity)
+                } else {
+                    EnvironmentPicker()
                 }
             }
         }
