@@ -34,7 +34,6 @@ struct ContentView: View {
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
         .modifier(HideTitleModifier())
-        .toolbarBackground(.visible, for: .windowToolbar)
         .environment(\.runOperationAction, RunOperationAction { segment in
             run(segment: segment)
         })
