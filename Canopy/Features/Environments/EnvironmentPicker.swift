@@ -53,37 +53,15 @@ struct EnvironmentPicker: View {
                 appState.showEnvironments = true
             }
         } label: {
-            pillLabel
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-    }
-
-    @ViewBuilder
-    private var pillLabel: some View {
-        HStack(spacing: 4) {
             if let env = activeEnvironment {
-                Image(systemName: "square.stack.3d.up.fill")
-                    .foregroundStyle(env.environmentColor.color)
-                    .font(.system(size: 11, weight: .medium))
                 Text(env.name.isEmpty ? "Untitled" : env.name)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
             } else {
                 Text("No Environment")
-                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(.tertiary)
         }
+        .menuStyle(.borderlessButton)
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(.quaternary)
-        )
     }
 
     private func setActiveEnvironment(_ environmentID: UUID?) {
