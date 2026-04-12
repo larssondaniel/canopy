@@ -5,13 +5,9 @@ struct ResponsePane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ResponseMetadataBar(tab: tab)
-            Divider()
             ResponseBodyView(tab: tab)
-            if let responseHeaders = tab.responseHeaders {
-                Divider()
-                ResponseHeadersView(headers: responseHeaders)
-            }
+            Divider()
+            ResponseMetadataBar(tab: tab)
         }
     }
 }
