@@ -40,6 +40,7 @@ struct RunCancelButton: View {
 struct EndpointToolbarContent: View {
     @Bindable var tab: QueryTab
     var activeEnvironment: AppEnvironment?
+    @State private var isMethodHovering = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -47,6 +48,8 @@ struct EndpointToolbarContent: View {
             urlField
             shortcutHint
         }
+        .padding(.horizontal, 12)
+        .frame(minWidth: 400, idealWidth: 600, maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -56,10 +59,23 @@ struct EndpointToolbarContent: View {
                 Button(method.rawValue) { tab.method = method }
             }
         } label: {
-            Text(tab.method.rawValue)
-                .font(.system(size: 12, weight: .medium))
+            HStack(spacing: 2) {
+                Text(tab.method.rawValue)
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                isMethodHovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+                in: .capsule
+            )
+            .onHover { isMethodHovering = $0 }
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
 
         if #available(macOS 26.0, *) {
@@ -77,7 +93,7 @@ struct EndpointToolbarContent: View {
             activeEnvironment: activeEnvironment
         )
         .font(.system(size: 12, design: .monospaced))
-        .frame(minWidth: 300, maxWidth: 600)
+        .frame(maxWidth: .infinity)
 
         if #available(macOS 26.0, *) {
             field.glassEffect(.identity)
