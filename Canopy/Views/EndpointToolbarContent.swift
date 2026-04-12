@@ -87,12 +87,11 @@ struct EndpointToolbarContent: View {
 
     @ViewBuilder
     private var urlField: some View {
-        let field = TemplateTextField(
-            text: $tab.endpoint,
+        let field = TemplateURLField(
+            url: $tab.endpoint,
             placeholder: "https://example.com/graphql",
             activeEnvironment: activeEnvironment
         )
-        .font(.system(size: 12, design: .monospaced))
         .frame(maxWidth: .infinity)
 
         if #available(macOS 26.0, *) {
