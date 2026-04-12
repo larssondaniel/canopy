@@ -49,7 +49,7 @@ struct EndpointToolbarContent: View {
             shortcutHint
         }
         .padding(.horizontal, 12)
-        .frame(minWidth: 400, idealWidth: 600, maxWidth: .infinity)
+        .frame(minWidth: 300, idealWidth: 600, maxWidth: .infinity)
     }
 
     @ViewBuilder

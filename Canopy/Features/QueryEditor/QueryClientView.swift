@@ -8,9 +8,9 @@ struct QueryClientView: View {
     var body: some View {
         HSplitView {
             RequestPane(tab: tab, activeEnvironment: activeEnvironment)
-                .frame(minWidth: 300)
+                .frame(minWidth: 200)
             ResponsePane(tab: tab)
-                .frame(minWidth: 300)
+                .frame(minWidth: 200)
         }
     }
 }
