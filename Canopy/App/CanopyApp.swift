@@ -14,5 +14,6 @@ struct CanopyApp: App {
         }
         .modelContainer(for: [QueryTab.self, AppEnvironment.self, ActiveEnvironmentState.self])
         .defaultSize(width: 1200, height: 800)
+        .windowToolbarStyle(.unified)
     }
 }

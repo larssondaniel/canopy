@@ -9,6 +9,7 @@ struct ContentView: View {
     @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
     @Query private var activeStates: [ActiveEnvironmentState]
     @State private var astService = QueryASTService()
+    private let client = GraphQLClient()
 
     private var activeEnvironment: AppEnvironment? {
         guard let activeID = activeStates.first?.activeEnvironmentID else { return nil }
@@ -32,9 +33,39 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
+        .modifier(HideTitleModifier())
+        .environment(\.runOperationAction, RunOperationAction { segment in
+            run(segment: segment)
+        })
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                if let tab = activeQueryTab {
+                    RunCancelButton(
+                        isLoading: tab.isLoading,
+                        hasUnresolved: hasUnresolved,
+                        runButtonTooltip: runButtonTooltip,
+                        onRun: { run() },
+                        onCancel: cancel
+                    )
+                }
+            }
+
+            ToolbarItem(placement: .principal) {
+                if let tab = activeQueryTab {
+                    EndpointToolbarContent(
+                        tab: tab,
+                        activeEnvironment: activeEnvironment
+                    )
+                }
+            }
+
             ToolbarItem(placement: .automatic) {
-                EnvironmentPicker()
+                if #available(macOS 26.0, *) {
+                    EnvironmentPicker()
+                        .glassEffect(.identity)
+                } else {
+                    EnvironmentPicker()
+                }
             }
         }
         .sheet(isPresented: $appState.showEnvironments) {
@@ -54,6 +85,65 @@ struct ContentView: View {
         .onAppear {
             updateActiveEndpoint()
         }
+    }
+
+    // MARK: - Unresolved Variable Validation
+
+    private var hasUnresolved: Bool {
+        activeQueryTab?.hasUnresolvedVariables(environment: activeEnvironment) ?? false
+    }
+
+    private var runButtonTooltip: String {
+        if let names = activeQueryTab?.unresolvedVariableNames(environment: activeEnvironment), !names.isEmpty {
+            return "Undefined variables: \(names.map { "{{\($0)}}" }.joined(separator: ", "))"
+        }
+        return "Send request (⌘⏎)"
+    }
+
+    // MARK: - Run / Cancel
+
+    private func run(segment: OperationSegment? = nil) {
+        guard let tab = activeQueryTab else { return }
+        tab.currentTask?.cancel()
+        tab.currentTask = Task {
+            let operationName: String?
+            if let doc = astService.currentDocument,
+               doc.definitions.count > 1 {
+                let targetSegment = segment ?? astService.activeSegment ?? .queries
+                switch targetSegment {
+                case .queries: operationName = "Query"
+                case .mutations: operationName = "Mutation"
+                case .subscriptions: operationName = "Subscription"
+                }
+            } else {
+                operationName = nil
+            }
+
+            await client.send(tab: tab, environmentVariables: activeEnvironment?.variables, operationName: operationName)
+
+            if tab.lastError == nil, tab.responseStatusCode != nil {
+                let endpoint: String
+                if let envVars = activeEnvironment?.variables {
+                    endpoint = TemplateEngine.substitute(in: tab.endpoint, variables: envVars).resolvedText
+                } else {
+                    endpoint = tab.endpoint
+                }
+
+                schemaStore.setActiveEndpoint(
+                    endpoint,
+                    method: tab.method,
+                    auth: tab.authConfig.toAuthConfiguration(),
+                    headers: tab.headers
+                )
+                schemaStore.fetchSchema(endpoint: endpoint)
+            }
+        }
+    }
+
+    private func cancel() {
+        guard let tab = activeQueryTab else { return }
+        tab.currentTask?.cancel()
+        tab.isLoading = false
     }
 
     private func updateActiveEndpoint() {
@@ -87,5 +177,15 @@ struct ContentView: View {
             auth: queryTab.authConfig.toAuthConfiguration(),
             headers: queryTab.headers
         )
+    }
+}
+
+private struct HideTitleModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
+        }
     }
 }
