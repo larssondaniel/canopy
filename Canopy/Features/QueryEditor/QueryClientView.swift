@@ -10,7 +10,7 @@ struct QueryClientView: View {
         GeometryReader { geo in
             let position = dividerPosition ?? geo.size.width * 0.5
             let minPos: CGFloat = 200
-            let maxPos = geo.size.width - 200
+            let maxPos = max(geo.size.width - 200, minPos)
 
             HStack(spacing: 0) {
                 RequestPane(tab: tab, activeEnvironment: activeEnvironment)
