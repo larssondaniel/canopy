@@ -22,6 +22,9 @@ final class QueryTab {
     var responseHeaders: [String: String]?
     var lastError: String?
 
+    // Relationships
+    var project: Project?
+
     // Transient state (not persisted)
     @Transient var currentTask: Task<Void, Never>? = nil
     @Transient var isLoading: Bool = false

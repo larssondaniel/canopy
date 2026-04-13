@@ -11,6 +11,9 @@ final class Project {
     var activeEnvironmentId: UUID?
     var createdAt: Date = Date()
 
+    @Relationship(deleteRule: .cascade, inverse: \QueryTab.project)
+    var queryTabs: [QueryTab] = []
+
     init(
         name: String = "",
         endpointPattern: String = "{{host}}",
