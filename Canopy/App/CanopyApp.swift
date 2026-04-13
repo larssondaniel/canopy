@@ -3,6 +3,7 @@ import SwiftData
 
 @main
 struct CanopyApp: App {
+    @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
     @State private var appState = AppState()
     @State private var schemaStore = SchemaStore()
 
@@ -22,5 +23,14 @@ struct CanopyApp: App {
         .modelContainer(for: [QueryTab.self, Project.self, ProjectEnvironment.self])
         .defaultSize(width: 1200, height: 800)
         .windowToolbarStyle(.unified)
+
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("New Project...") {
+                    appDelegate.showNewProjectSheet()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+        }
     }
 }

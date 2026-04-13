@@ -4,8 +4,8 @@
 Canopy is a native macOS GraphQL client built with Swift and SwiftUI.
 
 ## Prerequisites
-- macOS 14.0+ (Sonoma or later)
-- Xcode 15.0+
+- macOS 15.0+ (Sequoia or later)
+- Xcode 16.0+
 - XcodeGen (`brew install xcodegen`)
 
 ## Project Setup
@@ -44,8 +44,8 @@ make open
 - `CanopyTests/` — Unit tests
 
 ## Architecture
-- **UI Framework:** SwiftUI with `@Observable` (requires macOS 14+)
-- **Deployment Target:** macOS 14.0 (Sonoma)
+- **UI Framework:** SwiftUI with `@Observable` (requires macOS 15+)
+- **Deployment Target:** macOS 15.0 (Sequoia)
 - **Networking:** URLSession
 - **Dependencies:** Managed via Swift Package Manager (declared in project.yml)
 
