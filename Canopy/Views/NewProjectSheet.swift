@@ -10,6 +10,7 @@ struct NewProjectSheet: View {
     @State private var name = ""
     @State private var endpointURL = ""
     @State private var introspectionState: IntrospectionState = .idle
+    @State private var introspectionTask: Task<Void, Never>?
 
     private enum IntrospectionState {
         case idle
@@ -93,8 +94,16 @@ struct NewProjectSheet: View {
         }
         .padding(24)
         .frame(width: 420)
-        .onChange(of: endpointURL) { _, newValue in
-            tryIntrospection(endpoint: newValue)
+        .onChange(of: endpointURL) { _, _ in
+            // Reset to clean state on every keystroke and cancel any pending attempt
+            introspectionTask?.cancel()
+            introspectionState = .idle
+        }
+        .task(id: endpointURL) {
+            // Debounce: wait ~1s after the user stops typing
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            tryIntrospection(endpoint: endpointURL)
         }
     }
 
@@ -119,6 +128,8 @@ struct NewProjectSheet: View {
     }
 
     private func tryIntrospection(endpoint: String) {
+        introspectionTask?.cancel()
+
         let trimmed = endpoint.trimmingCharacters(in: .whitespaces)
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
@@ -129,12 +140,16 @@ struct NewProjectSheet: View {
         }
 
         introspectionState = .loading
-        Task {
+        introspectionTask = Task {
             let client = IntrospectionClient()
             do {
                 _ = try await client.fetchSchema(url: url, method: .post, auth: .none, headers: [])
+                guard !Task.isCancelled else { return }
                 introspectionState = .success
+            } catch is CancellationError {
+                // Cancelled — leave state alone (onChange already reset to .idle)
             } catch {
+                guard !Task.isCancelled else { return }
                 introspectionState = .failed("Could not reach endpoint")
             }
         }
