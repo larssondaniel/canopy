@@ -1,17 +1,22 @@
 import SwiftUI
 import SwiftData
 
-struct ContentView: View {
+struct ProjectWindow: View {
+    let projectId: UUID?
     @SwiftUI.Environment(AppState.self) private var appState
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
     @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
-    @Query(sort: \Project.createdAt) private var projects: [Project]
+    @State private var windowState = ProjectWindowState()
     @State private var astService = QueryASTService()
+    @Query(sort: \Project.createdAt) private var allProjects: [Project]
     private let client = GraphQLClient()
 
     private var project: Project? {
-        projects.first
+        allProjects.first { $0.id == projectId }
+    }
+
+    private var tabs: [QueryTab] {
+        (project?.queryTabs ?? []).sorted { $0.sortOrder < $1.sortOrder }
     }
 
     private var resolvedVariables: [String: String] {
@@ -19,12 +24,26 @@ struct ContentView: View {
     }
 
     private var activeQueryTab: QueryTab? {
-        tabs.first
+        windowState.activeQueryTab ?? tabs.first
     }
 
     var body: some View {
-        @Bindable var appState = appState
+        Group {
+            if let project {
+                projectContent(project)
+            } else {
+                ContentUnavailableView(
+                    "Project Not Found",
+                    systemImage: "folder.badge.questionmark",
+                    description: Text("This project may have been deleted.")
+                )
+            }
+        }
+        .environment(windowState)
+    }
 
+    @ViewBuilder
+    private func projectContent(_ project: Project) -> some View {
         NavigationSplitView {
             Sidebar(activeTab: activeQueryTab, astService: astService)
         } detail: {
@@ -35,7 +54,7 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
-        .navigationTitle(project?.name.isEmpty == false ? project!.name : "Untitled Project")
+        .navigationTitle(project.name.isEmpty ? "Untitled Project" : project.name)
         .toolbarTitleDisplayMode(.inline)
         .environment(\.runOperationAction, RunOperationAction { segment in
             run(segment: segment)
@@ -52,29 +71,30 @@ struct ContentView: View {
 
             ToolbarItem(placement: .automatic) {
                 if #available(macOS 26.0, *) {
-                    EnvironmentPicker()
+                    EnvironmentPicker(project: project)
                         .glassEffect(.identity)
                 } else {
-                    EnvironmentPicker()
+                    EnvironmentPicker(project: project)
                 }
             }
         }
-        .sheet(isPresented: $appState.showEnvironments) {
-            EnvironmentContentView()
+        .sheet(isPresented: $windowState.showEnvironments) {
+            EnvironmentContentView(project: project)
                 .frame(minWidth: 600, minHeight: 400)
         }
         .onAppear {
             appState.modelContext = modelContext
-            _ = appState.ensureQueryTab()
-            _ = appState.ensureProject()
+            MigrationHelper.adoptOrphanedTabs(context: modelContext)
+            let tab = MigrationHelper.ensureQueryTab(for: project, context: modelContext)
+            if windowState.activeQueryTab == nil {
+                windowState.activeQueryTab = tab
+            }
+            updateActiveEndpoint()
         }
         .onChange(of: activeQueryTab?.endpoint) { _, _ in
             updateActiveEndpoint()
         }
-        .onChange(of: project?.activeEnvironmentId) { _, _ in
-            updateActiveEndpoint()
-        }
-        .onAppear {
+        .onChange(of: project.activeEnvironmentId) { _, _ in
             updateActiveEndpoint()
         }
     }
@@ -109,13 +129,17 @@ struct ContentView: View {
                     endpoint = tab.endpoint
                 }
 
-                schemaStore.setActiveEndpoint(
-                    endpoint,
+                windowState.activeEndpoint = SchemaStore.normalizeEndpoint(endpoint)
+                windowState.activeMethod = tab.method
+                windowState.activeAuth = tab.authConfig
+                windowState.activeHeaders = tab.headers
+
+                schemaStore.fetchSchema(
+                    endpoint: endpoint,
                     method: tab.method,
                     auth: tab.authConfig.toAuthConfiguration(),
                     headers: tab.headers
                 )
-                schemaStore.fetchSchema(endpoint: endpoint)
             }
         }
     }
@@ -128,12 +152,12 @@ struct ContentView: View {
 
     private func updateActiveEndpoint() {
         guard let queryTab = activeQueryTab else {
-            schemaStore.setActiveEndpoint(nil)
+            windowState.activeEndpoint = nil
             return
         }
         let endpoint = queryTab.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !endpoint.isEmpty else {
-            schemaStore.setActiveEndpoint(nil)
+            windowState.activeEndpoint = nil
             return
         }
 
@@ -145,12 +169,10 @@ struct ContentView: View {
             resolved = endpoint
         }
 
-        schemaStore.setActiveEndpoint(
-            resolved,
-            method: queryTab.method,
-            auth: queryTab.authConfig.toAuthConfiguration(),
-            headers: queryTab.headers
-        )
+        windowState.activeEndpoint = SchemaStore.normalizeEndpoint(resolved)
+        windowState.activeMethod = queryTab.method
+        windowState.activeAuth = queryTab.authConfig
+        windowState.activeHeaders = queryTab.headers
 
         schemaStore.fetchSchema(
             endpoint: resolved,

@@ -1,34 +1,30 @@
 import SwiftUI
-import SwiftData
 
 struct EnvironmentPicker: View {
-    @SwiftUI.Environment(AppState.self) private var appState
-    @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \Project.createdAt) private var projects: [Project]
-
-    private var project: Project? {
-        projects.first
-    }
+    @SwiftUI.Environment(ProjectWindowState.self) private var windowState
+    var project: Project
 
     private var activeEnvironment: ProjectEnvironment? {
-        project?.activeEnvironment
+        project.activeEnvironment
     }
 
     var body: some View {
+        @Bindable var windowState = windowState
+
         Menu {
             Button {
                 setActiveEnvironment(nil)
             } label: {
                 HStack {
                     Text("Default")
-                    if project?.activeEnvironmentId == nil {
+                    if project.activeEnvironmentId == nil {
                         Spacer()
                         Image(systemName: "checkmark")
                     }
                 }
             }
 
-            if let project, !project.environments.isEmpty {
+            if !project.environments.isEmpty {
                 Divider()
 
                 ForEach(project.environments.sorted(by: { $0.sortOrder < $1.sortOrder })) { env in
@@ -48,7 +44,7 @@ struct EnvironmentPicker: View {
             Divider()
 
             Button("Manage Environments...") {
-                appState.showEnvironments = true
+                windowState.showEnvironments = true
             }
         } label: {
             if let env = activeEnvironment {
@@ -69,6 +65,6 @@ struct EnvironmentPicker: View {
     }
 
     private func setActiveEnvironment(_ environmentID: UUID?) {
-        project?.activeEnvironmentId = environmentID
+        project.activeEnvironmentId = environmentID
     }
 }

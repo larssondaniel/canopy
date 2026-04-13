@@ -4,6 +4,7 @@ import SwiftUI
 /// Replaces the Schema tab with on-demand type browsing.
 struct TypeBrowserSheet: View {
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
+    @SwiftUI.Environment(ProjectWindowState.self) private var windowState
     @SwiftUI.Environment(\.dismiss) private var dismiss
 
     @State private var searchText = ""
@@ -14,7 +15,7 @@ struct TypeBrowserSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let endpoint = schemaStore.activeEndpoint,
+                if let endpoint = windowState.activeEndpoint,
                    case .loaded(let schema) = schemaStore.state(for: endpoint) {
                     typeBrowser(schema: schema)
                 } else {

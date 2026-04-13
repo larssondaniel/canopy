@@ -7,8 +7,15 @@ struct CanopyApp: App {
     @State private var schemaStore = SchemaStore()
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        Window("Welcome to Canopy", id: "welcome") {
+            WelcomeView()
+                .environment(appState)
+        }
+        .modelContainer(for: [QueryTab.self, Project.self, ProjectEnvironment.self])
+        .defaultSize(width: 800, height: 500)
+
+        WindowGroup(for: UUID.self) { $projectId in
+            ProjectWindow(projectId: projectId)
                 .environment(appState)
                 .environment(schemaStore)
         }

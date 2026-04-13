@@ -13,7 +13,7 @@ private enum CellID: Hashable {
 
 struct VariableGridView: View {
     @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \Project.createdAt) private var projects: [Project]
+    var project: Project?
 
     @State private var newKeyName = ""
     @State private var showNewEnvironmentPopover = false
@@ -23,10 +23,6 @@ struct VariableGridView: View {
     @State private var hoveredHeaderID: UUID?
     @State private var colorPickerEnvID: UUID?
     @State private var editPopoverEnvID: UUID?
-
-    private var project: Project? {
-        projects.first
-    }
 
     private var sortedEnvironments: [ProjectEnvironment] {
         project?.environments.sorted(by: { $0.sortOrder < $1.sortOrder }) ?? []
@@ -403,6 +399,7 @@ struct VariableGridView: View {
                     set: { if !$0 { editPopoverEnvID = nil } }
                 )) {
                     NewEnvironmentPopover(
+                        project: project!,
                         isPresented: Binding(
                             get: { editPopoverEnvID == env.id },
                             set: { if !$0 { editPopoverEnvID = nil } }
@@ -459,7 +456,7 @@ struct VariableGridView: View {
         .buttonStyle(.plain)
         .help("Add Environment")
         .popover(isPresented: $showNewEnvironmentPopover) {
-            NewEnvironmentPopover(isPresented: $showNewEnvironmentPopover)
+            NewEnvironmentPopover(project: project!, isPresented: $showNewEnvironmentPopover)
         }
     }
 
