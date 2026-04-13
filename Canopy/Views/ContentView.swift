@@ -39,24 +39,19 @@ struct ContentView: View {
         })
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                if let tab = activeQueryTab {
-                    RunCancelButton(
-                        isLoading: tab.isLoading,
-                        hasUnresolved: hasUnresolved,
-                        runButtonTooltip: runButtonTooltip,
-                        onRun: { run() },
-                        onCancel: cancel
-                    )
-                }
+                RunCancelButton(
+                    tab: activeQueryTab,
+                    activeEnvironment: activeEnvironment,
+                    onRun: { run() },
+                    onCancel: cancel
+                )
             }
 
             ToolbarItem(placement: .principal) {
-                if let tab = activeQueryTab {
-                    EndpointToolbarContent(
-                        tab: tab,
-                        activeEnvironment: activeEnvironment
-                    )
-                }
+                EndpointToolbarContent(
+                    tab: activeQueryTab,
+                    activeEnvironment: activeEnvironment
+                )
             }
 
             ToolbarItem(placement: .automatic) {
@@ -85,19 +80,6 @@ struct ContentView: View {
         .onAppear {
             updateActiveEndpoint()
         }
-    }
-
-    // MARK: - Unresolved Variable Validation
-
-    private var hasUnresolved: Bool {
-        activeQueryTab?.hasUnresolvedVariables(environment: activeEnvironment) ?? false
-    }
-
-    private var runButtonTooltip: String {
-        if let names = activeQueryTab?.unresolvedVariableNames(environment: activeEnvironment), !names.isEmpty {
-            return "Undefined variables: \(names.map { "{{\($0)}}" }.joined(separator: ", "))"
-        }
-        return "Send request (⌘⏎)"
     }
 
     // MARK: - Run / Cancel
