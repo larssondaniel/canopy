@@ -35,7 +35,8 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
-        .modifier(HideTitleModifier())
+        .navigationTitle(project?.name.isEmpty == false ? project!.name : "Untitled Project")
+        .toolbarTitleDisplayMode(.inline)
         .environment(\.runOperationAction, RunOperationAction { segment in
             run(segment: segment)
         })
@@ -46,13 +47,6 @@ struct ContentView: View {
                     resolvedVariables: resolvedVariables,
                     onRun: { run() },
                     onCancel: cancel
-                )
-            }
-
-            ToolbarItem(placement: .principal) {
-                EndpointToolbarContent(
-                    tab: activeQueryTab,
-                    resolvedVariables: resolvedVariables
                 )
             }
 
@@ -164,15 +158,5 @@ struct ContentView: View {
             auth: queryTab.authConfig.toAuthConfiguration(),
             headers: queryTab.headers
         )
-    }
-}
-
-private struct HideTitleModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.toolbar(removing: .title)
-        } else {
-            content
-        }
     }
 }

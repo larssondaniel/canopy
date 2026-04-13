@@ -20,7 +20,7 @@ struct EnvironmentPicker: View {
                 setActiveEnvironment(nil)
             } label: {
                 HStack {
-                    Text("No Environment")
+                    Text("Default")
                     if project?.activeEnvironmentId == nil {
                         Spacer()
                         Image(systemName: "checkmark")
@@ -52,9 +52,15 @@ struct EnvironmentPicker: View {
             }
         } label: {
             if let env = activeEnvironment {
-                Text(env.name.isEmpty ? "Untitled" : env.name)
+                Label {
+                    Text(env.name.isEmpty ? "Untitled" : env.name)
+                } icon: {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(env.environmentColor.color)
+                }
             } else {
-                Text("No Environment")
+                Text("Default")
                     .foregroundStyle(.secondary)
             }
         }
