@@ -4,7 +4,7 @@ import AppKit
 struct TemplateURLField: NSViewRepresentable {
     @Binding var url: String
     var placeholder: String = ""
-    var activeEnvironment: AppEnvironment?
+    var environmentVariables: [String: String] = [:]
 
     func makeNSView(context: Context) -> TokenizedURLTextField {
         let textField = TokenizedURLTextField()
@@ -23,7 +23,7 @@ struct TemplateURLField: NSViewRepresentable {
         defer { context.coordinator.isUpdating = false }
 
         if let cell = textField.cell as? TokenizedURLFieldCell {
-            cell.environmentVariables = activeEnvironment?.variables ?? [:]
+            cell.environmentVariables = environmentVariables
         }
 
         // The field editor owns the text while editing — skip redundant updates.

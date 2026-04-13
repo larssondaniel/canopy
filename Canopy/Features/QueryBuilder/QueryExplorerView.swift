@@ -38,6 +38,7 @@ struct QueryExplorerView: View {
     var astService: QueryASTService
 
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
+    @SwiftUI.Environment(ProjectWindowState.self) private var windowState
 
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -59,7 +60,7 @@ struct QueryExplorerView: View {
 
     var body: some View {
         Group {
-            if let endpoint = schemaStore.activeEndpoint {
+            if let endpoint = windowState.activeEndpoint {
                 explorerContent(for: endpoint)
             } else {
                 ContentUnavailableView(
@@ -96,24 +97,24 @@ struct QueryExplorerView: View {
             }
         }
         .onChange(of: expandedSections) { _, newValue in
-            if let endpoint = schemaStore.activeEndpoint {
+            if let endpoint = windowState.activeEndpoint {
                 ExpandStateStore.saveExpandedSections(newValue, for: endpoint)
             }
         }
         .onChange(of: expandedPaths) { _, newValue in
-            if let endpoint = schemaStore.activeEndpoint {
+            if let endpoint = windowState.activeEndpoint {
                 ExpandStateStore.saveExpandedPaths(newValue, for: endpoint)
             }
         }
-        .task(id: schemaStore.activeEndpoint) {
+        .task(id: windowState.activeEndpoint) {
             // Load persisted expand state when endpoint changes
-            guard let endpoint = schemaStore.activeEndpoint else { return }
+            guard let endpoint = windowState.activeEndpoint else { return }
             expandedSections = ExpandStateStore.loadExpandedSections(for: endpoint)
             expandedPaths = ExpandStateStore.loadExpandedPaths(for: endpoint)
             astService.preservedSelections = ExpandStateStore.loadPreservedSelections(for: endpoint)
         }
         .onChange(of: astService.preservedSelections) { _, newValue in
-            if let endpoint = schemaStore.activeEndpoint {
+            if let endpoint = windowState.activeEndpoint {
                 ExpandStateStore.savePreservedSelections(newValue, for: endpoint)
             }
         }
@@ -131,7 +132,13 @@ struct QueryExplorerView: View {
                 Text("Fetch the schema to explore and build queries.")
             } actions: {
                 Button("Fetch Schema") {
-                    schemaStore.fetchSchema(endpoint: endpoint, force: true)
+                    schemaStore.fetchSchema(
+                        endpoint: endpoint,
+                        method: windowState.activeMethod,
+                        auth: windowState.activeAuth.toAuthConfiguration(),
+                        headers: windowState.activeHeaders,
+                        force: true
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -153,7 +160,13 @@ struct QueryExplorerView: View {
                 Text(message)
             } actions: {
                 Button("Retry") {
-                    schemaStore.fetchSchema(endpoint: endpoint, force: true)
+                    schemaStore.fetchSchema(
+                        endpoint: endpoint,
+                        method: windowState.activeMethod,
+                        auth: windowState.activeAuth.toAuthConfiguration(),
+                        headers: windowState.activeHeaders,
+                        force: true
+                    )
                 }
             }
         }
@@ -342,7 +355,13 @@ struct QueryExplorerView: View {
                 .help("Browse Types")
 
                 Button {
-                    schemaStore.fetchSchema(endpoint: endpoint, force: true)
+                    schemaStore.fetchSchema(
+                        endpoint: endpoint,
+                        method: windowState.activeMethod,
+                        auth: windowState.activeAuth.toAuthConfiguration(),
+                        headers: windowState.activeHeaders,
+                        force: true
+                    )
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }

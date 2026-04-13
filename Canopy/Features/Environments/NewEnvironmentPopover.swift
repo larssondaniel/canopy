@@ -3,10 +3,10 @@ import SwiftData
 
 struct NewEnvironmentPopover: View {
     @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
+    var project: Project
 
     @Binding var isPresented: Bool
-    var editing: AppEnvironment?
+    var editing: ProjectEnvironment?
 
     @State private var name = "New Environment"
     @State private var selectedColor: EnvironmentColor = .blue
@@ -47,7 +47,7 @@ struct NewEnvironmentPopover: View {
                 if isEditMode {
                     Button("Delete", role: .destructive) {
                         if let editing {
-                            modelContext.delete(editing)
+                            project.deleteEnvironment(editing, context: modelContext)
                         }
                         isPresented = false
                     }
@@ -84,18 +84,14 @@ struct NewEnvironmentPopover: View {
     }
 
     private func createEnvironment() {
-        let existingKeys = environments.first?.variables.keys.sorted() ?? []
-        var variables: [String: String] = [:]
-        for key in existingKeys {
-            variables[key] = ""
-        }
-
-        let env = AppEnvironment(
+        let sortOrder = (project.environments.map(\.sortOrder).max() ?? -1) + 1
+        let env = ProjectEnvironment(
             name: name.trimmingCharacters(in: .whitespaces),
-            variables: variables,
-            sortOrder: (environments.last?.sortOrder ?? -1) + 1,
+            variables: [],
+            sortOrder: sortOrder,
             color: selectedColor
         )
+        project.environments.append(env)
         modelContext.insert(env)
     }
 

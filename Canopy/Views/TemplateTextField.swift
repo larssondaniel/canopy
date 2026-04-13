@@ -4,7 +4,7 @@ import AppKit
 struct TemplateTextField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = ""
-    var activeEnvironment: AppEnvironment?
+    var environmentVariables: [String: String] = [:]
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
 
     func makeNSView(context: Context) -> NSTextField {
@@ -23,7 +23,7 @@ struct TemplateTextField: NSViewRepresentable {
         context.coordinator.isUpdating = true
         defer { context.coordinator.isUpdating = false }
 
-        if activeEnvironment != nil {
+        if !environmentVariables.isEmpty {
             let attributed = buildAttributedString(from: text)
             textField.attributedStringValue = attributed
         } else {
@@ -42,18 +42,17 @@ struct TemplateTextField: NSViewRepresentable {
         ])
 
         let variables = TemplateEngine.findVariables(in: text)
-        let envVars = activeEnvironment?.variables ?? [:]
 
         for variable in variables {
             let nsRange = NSRange(variable.range, in: text)
-            let isResolved = envVars[variable.name] != nil
+            let isResolved = environmentVariables[variable.name] != nil
             let bgColor: NSColor = isResolved ? .systemBlue.withAlphaComponent(0.2) : .systemRed.withAlphaComponent(0.2)
             let fgColor: NSColor = isResolved ? .systemBlue : .systemRed
 
             result.addAttributes([
                 .backgroundColor: bgColor,
                 .foregroundColor: fgColor,
-                .toolTip: isResolved ? (envVars[variable.name] ?? "") : "Undefined variable"
+                .toolTip: isResolved ? (environmentVariables[variable.name] ?? "") : "Undefined variable"
             ], range: nsRange)
         }
 

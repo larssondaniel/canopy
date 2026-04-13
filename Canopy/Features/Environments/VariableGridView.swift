@@ -6,15 +6,14 @@ private let valueColumnWidth: CGFloat = 200
 private let iconLeading: CGFloat = 26
 private let rowHeight: CGFloat = 30
 
-private struct CellID: Hashable {
-    let envID: UUID
-    let key: String
+private enum CellID: Hashable {
+    case defaults(key: String)
+    case environment(envID: UUID, key: String)
 }
 
 struct VariableGridView: View {
     @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
-    @Query private var activeStates: [ActiveEnvironmentState]
+    var project: Project?
 
     @State private var newKeyName = ""
     @State private var showNewEnvironmentPopover = false
@@ -25,13 +24,24 @@ struct VariableGridView: View {
     @State private var colorPickerEnvID: UUID?
     @State private var editPopoverEnvID: UUID?
 
+    private var sortedEnvironments: [ProjectEnvironment] {
+        project?.environments.sorted(by: { $0.sortOrder < $1.sortOrder }) ?? []
+    }
+
+    /// All variable keys from defaults and all environments, preserving order.
     private var allKeys: [String] {
+        guard let project else { return [] }
         var seen = Set<String>()
         var keys: [String] = []
-        for env in environments {
-            for key in env.variables.keys.sorted() {
-                if seen.insert(key).inserted {
-                    keys.append(key)
+        for v in project.defaultVariables {
+            if seen.insert(v.key).inserted {
+                keys.append(v.key)
+            }
+        }
+        for env in sortedEnvironments {
+            for v in env.variables {
+                if seen.insert(v.key).inserted {
+                    keys.append(v.key)
                 }
             }
         }
@@ -39,7 +49,7 @@ struct VariableGridView: View {
     }
 
     var body: some View {
-        if environments.isEmpty {
+        if project == nil || (project!.defaultVariables.isEmpty && sortedEnvironments.isEmpty) {
             emptyState
         } else {
             gridBody
@@ -48,9 +58,9 @@ struct VariableGridView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No Environments", systemImage: "tray")
+            Label("No Variables", systemImage: "tray")
         } description: {
-            Text("Click + to create your first environment.")
+            Text("Add a variable key to get started.")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
@@ -91,7 +101,15 @@ struct VariableGridView: View {
                     .gridCellUnsizedAxes([.horizontal, .vertical])
                     .frame(width: keyColumnWidth)
 
-                ForEach(environments) { env in
+                // Defaults column header
+                Text("Default")
+                    .font(.system(.body, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: valueColumnWidth, alignment: .leading)
+                    .padding(.leading, iconLeading)
+
+                // Environment column headers
+                ForEach(sortedEnvironments) { env in
                     environmentColumnHeader(for: env)
                         .frame(width: valueColumnWidth, alignment: .leading)
                 }
@@ -136,9 +154,13 @@ struct VariableGridView: View {
                         Button("Delete Variable", role: .destructive) { removeKey(key) }
                     }
 
-                    // Value columns
-                    ForEach(environments) { env in
-                        valueCell(for: env, key: key)
+                    // Defaults value column
+                    defaultValueCell(key: key)
+                        .frame(width: valueColumnWidth, alignment: .topLeading)
+
+                    // Environment value columns
+                    ForEach(sortedEnvironments) { env in
+                        environmentValueCell(for: env, key: key)
                             .frame(width: valueColumnWidth, alignment: .topLeading)
                     }
 
@@ -176,7 +198,15 @@ struct VariableGridView: View {
                     .frame(width: keyColumnWidth, alignment: .leading)
                     .onSubmit { addKey() }
 
-                ForEach(environments) { env in
+                // Defaults placeholder
+                Text("value")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.quaternary)
+                    .lineLimit(1)
+                    .padding(.leading, iconLeading)
+                    .frame(width: valueColumnWidth, alignment: .leading)
+
+                ForEach(sortedEnvironments) { env in
                     Text("value")
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.quaternary)
@@ -204,18 +234,65 @@ struct VariableGridView: View {
             .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Value Cell
+    // MARK: - Default Value Cell
 
     @ViewBuilder
-    private func valueCell(for env: AppEnvironment, key: String) -> some View {
-        let cellID = CellID(envID: env.id, key: key)
+    private func defaultValueCell(key: String) -> some View {
+        if let project {
+            let cellID = CellID.defaults(key: key)
+            let isEditing = editingCell == cellID
+            let value = project.defaultVariables.first(where: { $0.key == key })?.value ?? ""
+
+            if isEditing {
+                TextField("value", text: Binding(
+                    get: { project.defaultVariables.first(where: { $0.key == key })?.value ?? "" },
+                    set: { newValue in
+                        if let idx = project.defaultVariables.firstIndex(where: { $0.key == key }) {
+                            project.defaultVariables[idx].value = newValue
+                        }
+                    }
+                ), axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(.body, design: .monospaced))
+                .padding(.leading, iconLeading)
+                .padding(.vertical, 4)
+                .onSubmit { editingCell = nil }
+            } else {
+                Text(value.isEmpty ? "value" : value)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(value.isEmpty ? .quaternary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, iconLeading)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        clearFocus()
+                        editingCell = cellID
+                    }
+            }
+        }
+    }
+
+    // MARK: - Environment Value Cell
+
+    @ViewBuilder
+    private func environmentValueCell(for env: ProjectEnvironment, key: String) -> some View {
+        let cellID = CellID.environment(envID: env.id, key: key)
         let isEditing = editingCell == cellID
-        let value = env.variables[key] ?? ""
+        let value = env.variables.first(where: { $0.key == key })?.value ?? ""
 
         if isEditing {
-            TextField("value", text: Binding(
-                get: { env.variables[key] ?? "" },
-                set: { env.variables[key] = $0 }
+            TextField("override", text: Binding(
+                get: { env.variables.first(where: { $0.key == key })?.value ?? "" },
+                set: { newValue in
+                    if let idx = env.variables.firstIndex(where: { $0.key == key }) {
+                        env.variables[idx].value = newValue
+                    } else {
+                        // Create a new override entry
+                        env.variables.append(Variable(key: key, value: newValue))
+                    }
+                }
             ), axis: .vertical)
             .textFieldStyle(.plain)
             .font(.system(.body, design: .monospaced))
@@ -223,7 +300,7 @@ struct VariableGridView: View {
             .padding(.vertical, 4)
             .onSubmit { editingCell = nil }
         } else {
-            Text(value.isEmpty ? "value" : value)
+            Text(value.isEmpty ? "override" : value)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(value.isEmpty ? .quaternary : .primary)
                 .lineLimit(1)
@@ -258,7 +335,7 @@ struct VariableGridView: View {
 
     // MARK: - Environment Column Header
 
-    private func environmentColumnHeader(for env: AppEnvironment) -> some View {
+    private func environmentColumnHeader(for env: ProjectEnvironment) -> some View {
         HStack(spacing: 6) {
             // Icon — click to change color
             Image(systemName: "square.stack.3d.up.fill")
@@ -322,6 +399,7 @@ struct VariableGridView: View {
                     set: { if !$0 { editPopoverEnvID = nil } }
                 )) {
                     NewEnvironmentPopover(
+                        project: project!,
                         isPresented: Binding(
                             get: { editPopoverEnvID == env.id },
                             set: { if !$0 { editPopoverEnvID = nil } }
@@ -343,7 +421,7 @@ struct VariableGridView: View {
         }
     }
 
-    private func colorPickerPopover(for env: AppEnvironment) -> some View {
+    private func colorPickerPopover(for env: ProjectEnvironment) -> some View {
         HStack(spacing: 8) {
             ForEach(EnvironmentColor.allCases, id: \.self) { color in
                 Circle()
@@ -378,55 +456,58 @@ struct VariableGridView: View {
         .buttonStyle(.plain)
         .help("Add Environment")
         .popover(isPresented: $showNewEnvironmentPopover) {
-            NewEnvironmentPopover(isPresented: $showNewEnvironmentPopover)
+            NewEnvironmentPopover(project: project!, isPresented: $showNewEnvironmentPopover)
         }
     }
 
     // MARK: - Actions
 
     private func addKey() {
+        guard let project else { return }
         let trimmed = newKeyName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, isValidKeyName(trimmed), !allKeys.contains(trimmed) else { return }
-        for env in environments {
-            env.variables[trimmed] = ""
-        }
+        project.defaultVariables.append(Variable(key: trimmed))
         newKeyName = ""
     }
 
     private func removeKey(_ key: String) {
-        for env in environments {
-            env.variables.removeValue(forKey: key)
+        guard let project else { return }
+        project.defaultVariables.removeAll { $0.key == key }
+        for env in sortedEnvironments {
+            env.variables.removeAll { $0.key == key }
         }
     }
 
     private func duplicateKey(_ key: String) {
+        guard let project else { return }
         var newKey = "\(key)_copy"
         var counter = 1
         while allKeys.contains(newKey) {
             counter += 1
             newKey = "\(key)_copy\(counter)"
         }
-        for env in environments {
-            env.variables[newKey] = env.variables[key] ?? ""
+        let defaultValue = project.defaultVariables.first(where: { $0.key == key })?.value ?? ""
+        project.defaultVariables.append(Variable(key: newKey, value: defaultValue))
+        for env in sortedEnvironments {
+            if let existing = env.variables.first(where: { $0.key == key }) {
+                env.variables.append(Variable(key: newKey, value: existing.value))
+            }
         }
     }
 
-    private func duplicateEnvironment(_ env: AppEnvironment) {
-        let copy = AppEnvironment(
+    private func duplicateEnvironment(_ env: ProjectEnvironment) {
+        let copy = ProjectEnvironment(
             name: "\(env.name) Copy",
-            variables: env.variables,
+            variables: env.variables.map { Variable(key: $0.key, value: $0.value) },
             sortOrder: env.sortOrder + 1,
             color: env.environmentColor
         )
+        project?.environments.append(copy)
         modelContext.insert(copy)
     }
 
-    private func deleteEnvironment(_ env: AppEnvironment) {
-        if let activeState = activeStates.first,
-           activeState.activeEnvironmentID == env.id {
-            activeState.activeEnvironmentID = nil
-        }
-        modelContext.delete(env)
+    private func deleteEnvironment(_ env: ProjectEnvironment) {
+        project?.deleteEnvironment(env, context: modelContext)
     }
 
     private func isValidKeyName(_ name: String) -> Bool {

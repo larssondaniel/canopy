@@ -2,7 +2,7 @@ import SwiftUI
 
 struct HeadersEditor: View {
     @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,7 +14,7 @@ struct HeadersEditor: View {
                         TemplateTextField(
                             text: $entry.value,
                             placeholder: "Value",
-                            activeEnvironment: activeEnvironment
+                            environmentVariables: resolvedVariables
                         )
                         Button {
                             tab.headers.removeAll { $0.id == entry.id }

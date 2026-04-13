@@ -1,39 +1,33 @@
 import SwiftUI
-import SwiftData
 
 struct EnvironmentPicker: View {
-    @SwiftUI.Environment(AppState.self) private var appState
-    @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
-    @Query private var activeStates: [ActiveEnvironmentState]
+    @SwiftUI.Environment(ProjectWindowState.self) private var windowState
+    var project: Project
 
-    private var activeState: ActiveEnvironmentState? {
-        activeStates.first
-    }
-
-    private var activeEnvironment: AppEnvironment? {
-        guard let activeID = activeState?.activeEnvironmentID else { return nil }
-        return environments.first { $0.id == activeID }
+    private var activeEnvironment: ProjectEnvironment? {
+        project.activeEnvironment
     }
 
     var body: some View {
+        @Bindable var windowState = windowState
+
         Menu {
             Button {
                 setActiveEnvironment(nil)
             } label: {
                 HStack {
-                    Text("No Environment")
-                    if activeState?.activeEnvironmentID == nil {
+                    Text("Default")
+                    if project.activeEnvironmentId == nil {
                         Spacer()
                         Image(systemName: "checkmark")
                     }
                 }
             }
 
-            if !environments.isEmpty {
+            if !project.environments.isEmpty {
                 Divider()
 
-                ForEach(environments) { env in
+                ForEach(project.environments.sorted(by: { $0.sortOrder < $1.sortOrder })) { env in
                     Button {
                         setActiveEnvironment(env.id)
                     } label: {
@@ -50,13 +44,19 @@ struct EnvironmentPicker: View {
             Divider()
 
             Button("Manage Environments...") {
-                appState.showEnvironments = true
+                windowState.showEnvironments = true
             }
         } label: {
             if let env = activeEnvironment {
-                Text(env.name.isEmpty ? "Untitled" : env.name)
+                Label {
+                    Text(env.name.isEmpty ? "Untitled" : env.name)
+                } icon: {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(env.environmentColor.color)
+                }
             } else {
-                Text("No Environment")
+                Text("Default")
                     .foregroundStyle(.secondary)
             }
         }
@@ -65,13 +65,6 @@ struct EnvironmentPicker: View {
     }
 
     private func setActiveEnvironment(_ environmentID: UUID?) {
-        let state: ActiveEnvironmentState
-        if let existing = activeStates.first {
-            state = existing
-        } else {
-            state = ActiveEnvironmentState()
-            modelContext.insert(state)
-        }
-        state.activeEnvironmentID = environmentID
+        project.activeEnvironmentId = environmentID
     }
 }

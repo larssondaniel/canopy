@@ -2,7 +2,7 @@ import SwiftUI
 
 struct QueryClientView: View {
     @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
     var astService: QueryASTService
     @State private var dividerPosition: CGFloat?
 
@@ -13,7 +13,7 @@ struct QueryClientView: View {
             let maxPos = max(geo.size.width - 200, minPos)
 
             HStack(spacing: 0) {
-                RequestPane(tab: tab, activeEnvironment: activeEnvironment)
+                RequestPane(tab: tab, resolvedVariables: resolvedVariables)
                     .frame(width: min(max(position, minPos), maxPos))
 
                 Rectangle()

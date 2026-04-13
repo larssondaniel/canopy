@@ -1,8 +1,9 @@
 import SwiftUI
-import SwiftData
 
 struct EnvironmentContentView: View {
+    var project: Project
+
     var body: some View {
-        VariableGridView()
+        VariableGridView(project: project)
     }
 }

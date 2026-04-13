@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AuthEditor: View {
     @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
     @State private var selectedAuthType: AuthType = .none
     @State private var username = ""
     @State private var password = ""
@@ -30,14 +30,14 @@ struct AuthEditor: View {
                 TemplateTextField(
                     text: $username,
                     placeholder: "Username",
-                    activeEnvironment: activeEnvironment
+                    environmentVariables: resolvedVariables
                 )
                 HStack {
                     if showPassword {
                         TemplateTextField(
                             text: $password,
                             placeholder: "Password",
-                            activeEnvironment: activeEnvironment
+                            environmentVariables: resolvedVariables
                         )
                     } else {
                         SecureField("Password", text: $password)
@@ -57,7 +57,7 @@ struct AuthEditor: View {
                         TemplateTextField(
                             text: $token,
                             placeholder: "Token",
-                            activeEnvironment: activeEnvironment
+                            environmentVariables: resolvedVariables
                         )
                     } else {
                         SecureField("Token", text: $token)
@@ -79,7 +79,7 @@ struct AuthEditor: View {
                         TemplateTextField(
                             text: $apiKeyValue,
                             placeholder: "Value",
-                            activeEnvironment: activeEnvironment
+                            environmentVariables: resolvedVariables
                         )
                     } else {
                         SecureField("Value", text: $apiKeyValue)

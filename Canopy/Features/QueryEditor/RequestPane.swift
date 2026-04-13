@@ -2,13 +2,13 @@ import SwiftUI
 
 struct RequestPane: View {
     @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
 
     var body: some View {
         VSplitView {
             QueryEditorView(tab: tab)
                 .frame(minHeight: 100)
-            BottomPanel(tab: tab, activeEnvironment: activeEnvironment)
+            BottomPanel(tab: tab, resolvedVariables: resolvedVariables)
                 .frame(minHeight: 80)
         }
     }
