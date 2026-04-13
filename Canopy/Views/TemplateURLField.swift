@@ -26,6 +26,9 @@ struct TemplateURLField: NSViewRepresentable {
             cell.environmentVariables = activeEnvironment?.variables ?? [:]
         }
 
+        // The field editor owns the text while editing — skip redundant updates.
+        guard textField.currentEditor() == nil else { return }
+
         if textField.stringValue != url {
             textField.stringValue = url
         }
@@ -58,6 +61,21 @@ class TokenizedURLTextField: NSTextField {
     override class var cellClass: AnyClass? {
         get { TokenizedURLFieldCell.self }
         set { super.cellClass = newValue }
+    }
+
+    private var tooltipStrings: [NSView.ToolTipTag: String] = [:]
+
+    func updateTooltips(_ tooltips: [(rect: NSRect, text: String)]) {
+        removeAllToolTips()
+        tooltipStrings.removeAll()
+        for tooltip in tooltips {
+            let tag = addToolTip(tooltip.rect, owner: self, userData: nil)
+            tooltipStrings[tag] = tooltip.text
+        }
+    }
+
+    @objc func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        tooltipStrings[tag] ?? ""
     }
 }
 
@@ -144,7 +162,7 @@ class TokenizedURLFieldCell: NSTextFieldCell {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: cellFrame).addClip()
 
-        textField.removeAllToolTips()
+        var tooltips: [(rect: NSRect, text: String)] = []
 
         // Draw pill backgrounds at exact glyph positions
         for pill in pills {
@@ -161,9 +179,10 @@ class TokenizedURLFieldCell: NSTextFieldCell {
             borderPath.lineWidth = 1
             borderPath.stroke()
 
-            let tooltipText = "\(pill.name) \u{2192} \(pill.value)"
-            textField.addToolTip(pillRect, owner: tooltipText as NSString, userData: nil)
+            tooltips.append((rect: pillRect, text: "\(pill.name) \u{2192} \(pill.value)"))
         }
+
+        (textField as? TokenizedURLTextField)?.updateTooltips(tooltips)
 
         // Draw text glyphs from the same layout — positions are guaranteed consistent
         let allGlyphs = NSRange(location: 0, length: layoutManager.numberOfGlyphs)
