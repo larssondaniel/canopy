@@ -19,4 +19,20 @@ final class AppState {
         modelContext.insert(tab)
         return tab
     }
+
+    /// Returns the single project, creating a default one if needed.
+    func ensureProject() -> Project? {
+        guard let modelContext else { return nil }
+        let projects = (try? modelContext.fetch(FetchDescriptor<Project>(sortBy: [SortDescriptor(\.createdAt)]))) ?? []
+        if let first = projects.first {
+            return first
+        }
+        let project = Project(
+            name: "Untitled Project",
+            endpointPattern: "{{host}}",
+            defaultVariables: [Variable(key: "host")]
+        )
+        modelContext.insert(project)
+        return project
+    }
 }

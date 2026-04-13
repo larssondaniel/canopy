@@ -2,12 +2,12 @@ import SwiftUI
 
 struct VariablesEditor: View {
     @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
 
     var body: some View {
         TemplateTextEditor(
             text: $tab.variables,
-            activeEnvironment: activeEnvironment
+            environmentVariables: resolvedVariables
         )
     }
 }

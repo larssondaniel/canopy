@@ -4,7 +4,7 @@ import SwiftUI
 
 struct RunCancelButton: View {
     var tab: QueryTab?
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
     var onRun: () -> Void
     var onCancel: () -> Void
 
@@ -13,14 +13,14 @@ struct RunCancelButton: View {
     }
 
     private var hasUnresolved: Bool {
-        tab?.hasUnresolvedVariables(environment: activeEnvironment) ?? false
+        tab?.hasUnresolvedVariables(variables: resolvedVariables) ?? false
     }
 
     private var tooltip: String {
-        if let names = tab?.unresolvedVariableNames(environment: activeEnvironment), !names.isEmpty {
+        if let names = tab?.unresolvedVariableNames(variables: resolvedVariables), !names.isEmpty {
             return "Undefined variables: \(names.map { "{{\($0)}}" }.joined(separator: ", "))"
         }
-        return "Send request (⌘⏎)"
+        return "Send request (\u{2318}\u{23CE})"
     }
 
     var body: some View {
@@ -53,7 +53,7 @@ struct RunCancelButton: View {
 
 struct EndpointToolbarContent: View {
     var tab: QueryTab?
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
     @State private var isMethodHovering = false
 
     var body: some View {
@@ -107,7 +107,7 @@ struct EndpointToolbarContent: View {
         let field = TemplateURLField(
             url: endpoint,
             placeholder: "https://example.com/graphql",
-            activeEnvironment: activeEnvironment
+            environmentVariables: resolvedVariables
         )
         .frame(maxWidth: .infinity)
 
@@ -119,7 +119,7 @@ struct EndpointToolbarContent: View {
     }
 
     private var shortcutHint: some View {
-        Text("⌘⏎")
+        Text("\u{2318}\u{23CE}")
             .foregroundStyle(.tertiary)
             .font(.system(size: 11))
     }

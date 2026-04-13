@@ -12,7 +12,7 @@ struct CanopyApp: App {
                 .environment(appState)
                 .environment(schemaStore)
         }
-        .modelContainer(for: [QueryTab.self, AppEnvironment.self, ActiveEnvironmentState.self])
+        .modelContainer(for: [QueryTab.self, Project.self, ProjectEnvironment.self])
         .defaultSize(width: 1200, height: 800)
         .windowToolbarStyle(.unified)
     }

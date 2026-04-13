@@ -4,16 +4,14 @@ import SwiftData
 struct EnvironmentPicker: View {
     @SwiftUI.Environment(AppState.self) private var appState
     @SwiftUI.Environment(\.modelContext) private var modelContext
-    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
-    @Query private var activeStates: [ActiveEnvironmentState]
+    @Query(sort: \Project.createdAt) private var projects: [Project]
 
-    private var activeState: ActiveEnvironmentState? {
-        activeStates.first
+    private var project: Project? {
+        projects.first
     }
 
-    private var activeEnvironment: AppEnvironment? {
-        guard let activeID = activeState?.activeEnvironmentID else { return nil }
-        return environments.first { $0.id == activeID }
+    private var activeEnvironment: ProjectEnvironment? {
+        project?.activeEnvironment
     }
 
     var body: some View {
@@ -23,17 +21,17 @@ struct EnvironmentPicker: View {
             } label: {
                 HStack {
                     Text("No Environment")
-                    if activeState?.activeEnvironmentID == nil {
+                    if project?.activeEnvironmentId == nil {
                         Spacer()
                         Image(systemName: "checkmark")
                     }
                 }
             }
 
-            if !environments.isEmpty {
+            if let project, !project.environments.isEmpty {
                 Divider()
 
-                ForEach(environments) { env in
+                ForEach(project.environments.sorted(by: { $0.sortOrder < $1.sortOrder })) { env in
                     Button {
                         setActiveEnvironment(env.id)
                     } label: {
@@ -65,13 +63,6 @@ struct EnvironmentPicker: View {
     }
 
     private func setActiveEnvironment(_ environmentID: UUID?) {
-        let state: ActiveEnvironmentState
-        if let existing = activeStates.first {
-            state = existing
-        } else {
-            state = ActiveEnvironmentState()
-            modelContext.insert(state)
-        }
-        state.activeEnvironmentID = environmentID
+        project?.activeEnvironmentId = environmentID
     }
 }

@@ -2,20 +2,25 @@ import Foundation
 import SwiftData
 
 @Model
-final class AppEnvironment {
+final class ProjectEnvironment {
     var id: UUID = UUID()
     var name: String = ""
-    var variables: [String: String] = [:]
-    var sortOrder: Int = 0
-    var createdAt: Date = Date()
+    var variables: [Variable] = []
     var colorName: String = "blue"
+    var sortOrder: Int = 0
+    var project: Project?
 
     var environmentColor: EnvironmentColor {
         get { EnvironmentColor(rawValue: colorName) ?? .blue }
         set { colorName = newValue.rawValue }
     }
 
-    init(name: String = "", variables: [String: String] = [:], sortOrder: Int = 0, color: EnvironmentColor = .blue) {
+    init(
+        name: String = "",
+        variables: [Variable] = [],
+        sortOrder: Int = 0,
+        color: EnvironmentColor = .blue
+    ) {
         self.name = name
         self.variables = variables
         self.sortOrder = sortOrder

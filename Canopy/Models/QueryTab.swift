@@ -30,26 +30,25 @@ final class QueryTab {
 }
 
 extension QueryTab {
-    func hasUnresolvedVariables(environment: AppEnvironment?) -> Bool {
-        guard let env = environment else { return false }
-        let vars = env.variables
+    func hasUnresolvedVariables(variables resolvedVars: [String: String]) -> Bool {
+        guard !resolvedVars.isEmpty else { return false }
 
-        if TemplateEngine.hasUnresolvedVariables(in: endpoint, variables: vars) { return true }
-        if TemplateEngine.hasUnresolvedVariables(in: variables, variables: vars) { return true }
+        if TemplateEngine.hasUnresolvedVariables(in: endpoint, variables: resolvedVars) { return true }
+        if TemplateEngine.hasUnresolvedVariables(in: variables, variables: resolvedVars) { return true }
 
         for header in headers {
-            if TemplateEngine.hasUnresolvedVariables(in: header.value, variables: vars) { return true }
+            if TemplateEngine.hasUnresolvedVariables(in: header.value, variables: resolvedVars) { return true }
         }
 
         let auth = authConfig.toAuthConfiguration()
         switch auth {
         case .bearer(let token):
-            if TemplateEngine.hasUnresolvedVariables(in: token, variables: vars) { return true }
+            if TemplateEngine.hasUnresolvedVariables(in: token, variables: resolvedVars) { return true }
         case .apiKey(_, let value):
-            if TemplateEngine.hasUnresolvedVariables(in: value, variables: vars) { return true }
+            if TemplateEngine.hasUnresolvedVariables(in: value, variables: resolvedVars) { return true }
         case .basic(let username, let password):
-            if TemplateEngine.hasUnresolvedVariables(in: username, variables: vars) { return true }
-            if TemplateEngine.hasUnresolvedVariables(in: password, variables: vars) { return true }
+            if TemplateEngine.hasUnresolvedVariables(in: username, variables: resolvedVars) { return true }
+            if TemplateEngine.hasUnresolvedVariables(in: password, variables: resolvedVars) { return true }
         case .none:
             break
         }
@@ -57,14 +56,13 @@ extension QueryTab {
         return false
     }
 
-    func unresolvedVariableNames(environment: AppEnvironment?) -> [String] {
-        guard let env = environment else { return [] }
-        let vars = env.variables
+    func unresolvedVariableNames(variables resolvedVars: [String: String]) -> [String] {
+        guard !resolvedVars.isEmpty else { return [] }
         var names: [String] = []
 
         let fields = [endpoint, variables] + headers.map(\.value)
         for field in fields {
-            for v in TemplateEngine.findVariables(in: field) where vars[v.name] == nil {
+            for v in TemplateEngine.findVariables(in: field) where resolvedVars[v.name] == nil {
                 if !names.contains(v.name) {
                     names.append(v.name)
                 }

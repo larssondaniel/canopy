@@ -2,7 +2,7 @@ import SwiftUI
 
 struct BottomPanel: View {
     @Bindable var tab: QueryTab
-    var activeEnvironment: AppEnvironment?
+    var resolvedVariables: [String: String]
     @State private var selectedPanel = 0
 
     var body: some View {
@@ -19,11 +19,11 @@ struct BottomPanel: View {
 
             switch selectedPanel {
             case 0:
-                VariablesEditor(tab: tab, activeEnvironment: activeEnvironment)
+                VariablesEditor(tab: tab, resolvedVariables: resolvedVariables)
             case 1:
-                HeadersEditor(tab: tab, activeEnvironment: activeEnvironment)
+                HeadersEditor(tab: tab, resolvedVariables: resolvedVariables)
             default:
-                AuthEditor(tab: tab, activeEnvironment: activeEnvironment)
+                AuthEditor(tab: tab, resolvedVariables: resolvedVariables)
             }
         }
     }

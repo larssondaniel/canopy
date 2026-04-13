@@ -6,14 +6,16 @@ struct ContentView: View {
     @SwiftUI.Environment(SchemaStore.self) private var schemaStore
     @SwiftUI.Environment(\.modelContext) private var modelContext
     @Query(sort: \QueryTab.sortOrder) private var tabs: [QueryTab]
-    @Query(sort: \AppEnvironment.sortOrder) private var environments: [AppEnvironment]
-    @Query private var activeStates: [ActiveEnvironmentState]
+    @Query(sort: \Project.createdAt) private var projects: [Project]
     @State private var astService = QueryASTService()
     private let client = GraphQLClient()
 
-    private var activeEnvironment: AppEnvironment? {
-        guard let activeID = activeStates.first?.activeEnvironmentID else { return nil }
-        return environments.first { $0.id == activeID }
+    private var project: Project? {
+        projects.first
+    }
+
+    private var resolvedVariables: [String: String] {
+        project?.resolvedVariables() ?? [:]
     }
 
     private var activeQueryTab: QueryTab? {
@@ -27,7 +29,7 @@ struct ContentView: View {
             Sidebar(activeTab: activeQueryTab, astService: astService)
         } detail: {
             if let tab = activeQueryTab {
-                QueryClientView(tab: tab, activeEnvironment: activeEnvironment, astService: astService)
+                QueryClientView(tab: tab, resolvedVariables: resolvedVariables, astService: astService)
             } else {
                 ContentUnavailableView("No Query", systemImage: "arrow.right.circle", description: Text("Loading..."))
             }
@@ -41,7 +43,7 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 RunCancelButton(
                     tab: activeQueryTab,
-                    activeEnvironment: activeEnvironment,
+                    resolvedVariables: resolvedVariables,
                     onRun: { run() },
                     onCancel: cancel
                 )
@@ -50,7 +52,7 @@ struct ContentView: View {
             ToolbarItem(placement: .principal) {
                 EndpointToolbarContent(
                     tab: activeQueryTab,
-                    activeEnvironment: activeEnvironment
+                    resolvedVariables: resolvedVariables
                 )
             }
 
@@ -70,11 +72,12 @@ struct ContentView: View {
         .onAppear {
             appState.modelContext = modelContext
             _ = appState.ensureQueryTab()
+            _ = appState.ensureProject()
         }
         .onChange(of: activeQueryTab?.endpoint) { _, _ in
             updateActiveEndpoint()
         }
-        .onChange(of: activeStates.first?.activeEnvironmentID) { _, _ in
+        .onChange(of: project?.activeEnvironmentId) { _, _ in
             updateActiveEndpoint()
         }
         .onAppear {
@@ -86,6 +89,7 @@ struct ContentView: View {
 
     private func run(segment: OperationSegment? = nil) {
         guard let tab = activeQueryTab else { return }
+        let vars = resolvedVariables
         tab.currentTask?.cancel()
         tab.currentTask = Task {
             let operationName: String?
@@ -101,12 +105,12 @@ struct ContentView: View {
                 operationName = nil
             }
 
-            await client.send(tab: tab, environmentVariables: activeEnvironment?.variables, operationName: operationName)
+            await client.send(tab: tab, environmentVariables: vars.isEmpty ? nil : vars, operationName: operationName)
 
             if tab.lastError == nil, tab.responseStatusCode != nil {
                 let endpoint: String
-                if let envVars = activeEnvironment?.variables {
-                    endpoint = TemplateEngine.substitute(in: tab.endpoint, variables: envVars).resolvedText
+                if !vars.isEmpty {
+                    endpoint = TemplateEngine.substitute(in: tab.endpoint, variables: vars).resolvedText
                 } else {
                     endpoint = tab.endpoint
                 }
@@ -139,9 +143,10 @@ struct ContentView: View {
             return
         }
 
+        let vars = resolvedVariables
         let resolved: String
-        if let envVars = activeEnvironment?.variables {
-            resolved = TemplateEngine.substitute(in: endpoint, variables: envVars).resolvedText
+        if !vars.isEmpty {
+            resolved = TemplateEngine.substitute(in: endpoint, variables: vars).resolvedText
         } else {
             resolved = endpoint
         }

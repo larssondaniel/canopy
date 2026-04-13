@@ -3,7 +3,7 @@ import AppKit
 
 struct TemplateTextEditor: NSViewRepresentable {
     @Binding var text: String
-    var activeEnvironment: AppEnvironment?
+    var environmentVariables: [String: String] = [:]
     var font: NSFont = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -53,22 +53,21 @@ struct TemplateTextEditor: NSViewRepresentable {
             .backgroundColor: NSColor.clear
         ], range: fullRange)
 
-        guard activeEnvironment != nil else { return }
+        guard !environmentVariables.isEmpty else { return }
 
         let text = textView.string
         let variables = TemplateEngine.findVariables(in: text)
-        let envVars = activeEnvironment?.variables ?? [:]
 
         for variable in variables {
             let nsRange = NSRange(variable.range, in: text)
-            let isResolved = envVars[variable.name] != nil
+            let isResolved = environmentVariables[variable.name] != nil
             let bgColor: NSColor = isResolved ? .systemBlue.withAlphaComponent(0.2) : .systemRed.withAlphaComponent(0.2)
             let fgColor: NSColor = isResolved ? .systemBlue : .systemRed
 
             textStorage.addAttributes([
                 .backgroundColor: bgColor,
                 .foregroundColor: fgColor,
-                .toolTip: isResolved ? (envVars[variable.name] ?? "") : "Undefined variable"
+                .toolTip: isResolved ? (environmentVariables[variable.name] ?? "") : "Undefined variable"
             ], range: nsRange)
         }
     }
